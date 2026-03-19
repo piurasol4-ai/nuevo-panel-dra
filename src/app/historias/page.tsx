@@ -1,6 +1,6 @@
  "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import type { Patient } from "@prisma/client";
 import { useSearchParams } from "next/navigation";
 
@@ -282,7 +282,7 @@ function buildHistoriaClinicaHtml(
 </html>`;
 }
 
-export default function HistoriasClinicasPage() {
+function HistoriasClinicasPageInner() {
   const searchParams = useSearchParams();
   const [patients, setPatients] = useState<Patient[]>([]);
   const [selectedPatientId, setSelectedPatientId] = useState<string>("");
@@ -1186,6 +1186,20 @@ export default function HistoriasClinicasPage() {
         )}
       </section>
     </main>
+  );
+}
+
+export default function HistoriasClinicasPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="space-y-4 p-4 sm:p-6">
+          <p className="text-sm text-slate-500">Cargando historias clínicas…</p>
+        </main>
+      }
+    >
+      <HistoriasClinicasPageInner />
+    </Suspense>
   );
 }
 
