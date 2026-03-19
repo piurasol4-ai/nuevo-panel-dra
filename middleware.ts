@@ -5,11 +5,13 @@ const PUBLIC_PATHS = new Set(["/login"]);
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
+  const isPublicAsset = /\.[a-zA-Z0-9]+$/.test(pathname);
 
   if (
     pathname.startsWith("/_next") ||
     pathname.startsWith("/favicon") ||
-    pathname.startsWith("/api/auth")
+    pathname.startsWith("/api/auth") ||
+    isPublicAsset
   ) {
     return NextResponse.next();
   }
