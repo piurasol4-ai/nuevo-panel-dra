@@ -2,12 +2,15 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { Patient } from "@prisma/client";
+import { useSearchParams } from "next/navigation";
 
 type ClinicalNote = {
   id: string;
   patientId: string;
   appointmentId: string | null;
   createdAt: string;
+  // Fecha de atención/ficha definida por la doctora (no es necesariamente createdAt)
+  visitDate: string | null;
   historyNumber: number;
   identificationExtra: string | null;
   personalHistory: string | null;
@@ -19,6 +22,17 @@ type ClinicalNote = {
   diagnosis: string | null;
   treatmentPlan: string | null;
   evolutionNotes: string | null;
+  // --- Campos extra por ficha/atención ---
+  nursingNotes: string | null;
+  treatmentNotes: string | null;
+  weight: string | null;
+  height: string | null;
+  bodyTemperature: string | null;
+  bloodPressure: string | null;
+  oxygenSaturation: string | null;
+  heartRate: string | null;
+  respiratoryRate: string | null;
+  glucose: string | null;
 };
 
 type PatientExtras = Patient & {
@@ -43,10 +57,47 @@ function escapeHtml(value: string) {
     .replace(/'/g, "&#39;");
 }
 
+function toLocalISODate(d: Date) {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function sortNotesByVisitDate(
+  items: ClinicalNote[],
+  order: "desc" | "asc" = "desc",
+) {
+  return items.slice().sort((a, b) => {
+    const ad = a.visitDate ?? a.createdAt.slice(0, 10);
+    const bd = b.visitDate ?? b.createdAt.slice(0, 10);
+    if (ad > bd) return order === "desc" ? -1 : 1;
+    if (ad < bd) return order === "desc" ? 1 : -1;
+    // Desempate por fecha de creación
+    if (a.createdAt < b.createdAt) return order === "desc" ? 1 : -1;
+    if (a.createdAt > b.createdAt) return order === "desc" ? -1 : 1;
+    return 0;
+  });
+}
+
+function splitTreatmentNotesAndRecipe(raw: string | null | undefined) {
+  const text = (raw ?? "").trim();
+  if (!text) return { treatmentNotes: "", recipe: "" };
+
+  const marker = "Receta:";
+  const markerIndex = text.indexOf(marker);
+  if (markerIndex < 0) return { treatmentNotes: text, recipe: "" };
+
+  const before = text.slice(0, markerIndex).trim();
+  const after = text.slice(markerIndex + marker.length).trim();
+  return { treatmentNotes: before, recipe: after };
+}
+
 function buildHistoriaClinicaHtml(
   note: ClinicalNote,
   patient: Patient | null,
   edadTexto: string,
+  fechaAtencion: string,
   fechaCreacion: string,
   fechaImpresion: string,
   logoUrl: string,
@@ -69,6 +120,33 @@ function buildHistoriaClinicaHtml(
       )
     : "";
   const edad = escapeHtml(edadTexto || "");
+  const nursingNotes = escapeHtml(note.nursingNotes ?? "");
+  const treatmentSplit = splitTreatmentNotesAndRecipe(note.treatmentNotes);
+  const treatmentNotes = escapeHtml(treatmentSplit.treatmentNotes);
+  const recipeText = escapeHtml(treatmentSplit.recipe);
+  const weight = escapeHtml(note.weight ?? "");
+  const height = escapeHtml(note.height ?? "");
+  const bodyTemperature = escapeHtml(note.bodyTemperature ?? "");
+  const bloodPressure = escapeHtml(note.bloodPressure ?? "");
+  const oxygenSaturation = escapeHtml(note.oxygenSaturation ?? "");
+  const heartRate = escapeHtml(note.heartRate ?? "");
+  const respiratoryRate = escapeHtml(note.respiratoryRate ?? "");
+  const glucose = escapeHtml(note.glucose ?? "");
+
+  const vitalLines = [
+    weight ? `Peso: ${weight}` : null,
+    height ? `Talla: ${height}` : null,
+    bodyTemperature ? `Temperatura corporal: ${bodyTemperature}` : null,
+    bloodPressure ? `Presión arterial: ${bloodPressure}` : null,
+    oxygenSaturation ? `Saturación: ${oxygenSaturation}` : null,
+    heartRate ? `Frecuencia cardíaca: ${heartRate}` : null,
+    respiratoryRate
+      ? `Frecuencia respiratoria: ${respiratoryRate}`
+      : null,
+    glucose ? `Glucosa: ${glucose}` : null,
+  ].filter(Boolean);
+
+  const vitalText = vitalLines.length ? vitalLines.join("<br/>") : "—";
 
   return `<!DOCTYPE html>
 <html lang="es">
@@ -106,6 +184,7 @@ function buildHistoriaClinicaHtml(
         </div>
       </div>
       <div class="meta">
+        <div><span class="label">Fecha de atención:</span> ${fechaAtencion}</div>
         <div><span class="label">Fecha y hora de creación:</span> ${fechaCreacion}</div>
         <div><span class="label">Fecha y hora de impresión:</span> ${fechaImpresion}</div>
       </div>
@@ -161,8 +240,26 @@ function buildHistoriaClinicaHtml(
     <h2>Diagnóstico</h2>
     <div class="section-box block">${escapeHtml(note.diagnosis ?? "")}</div>
 
-    <h2>Plan de tratamiento</h2>
-    <div class="section-box block">${escapeHtml(note.treatmentPlan ?? "")}</div>
+    ${
+      nursingNotes
+        ? `<h2>Notas de Enfermería</h2><div class="section-box block">${nursingNotes}</div>`
+        : ""
+    }
+
+    ${
+      treatmentNotes
+        ? `<h2>Notas de tratamiento</h2><div class="section-box block">${treatmentNotes}</div>`
+        : ""
+    }
+
+    ${
+      recipeText
+        ? `<h2>Receta</h2><div class="section-box block">${recipeText}</div>`
+        : ""
+    }
+
+    <h2>Signos vitales</h2>
+    <div class="section-box block">${vitalText}</div>
 
     <h2>Evolución / notas de progreso</h2>
     <div class="section-box block">${escapeHtml(note.evolutionNotes ?? "")}</div>
@@ -182,6 +279,7 @@ function buildHistoriaClinicaHtml(
 }
 
 export default function HistoriasClinicasPage() {
+  const searchParams = useSearchParams();
   const [patients, setPatients] = useState<Patient[]>([]);
   const [selectedPatientId, setSelectedPatientId] = useState<string>("");
   const [notes, setNotes] = useState<ClinicalNote[]>([]);
@@ -194,15 +292,38 @@ export default function HistoriasClinicasPage() {
   const [physicalExam, setPhysicalExam] = useState("");
   const [diagnostics, setDiagnostics] = useState("");
   const [diagnosis, setDiagnosis] = useState("");
-  const [treatmentPlan, setTreatmentPlan] = useState("");
   const [evolutionNotes, setEvolutionNotes] = useState("");
+  const [nursingNotes, setNursingNotes] = useState("");
+  const [treatmentNotes, setTreatmentNotes] = useState("");
+  const [weight, setWeight] = useState("");
+  const [height, setHeight] = useState("");
+  const [bodyTemperature, setBodyTemperature] = useState("");
+  const [bloodPressure, setBloodPressure] = useState("");
+  const [oxygenSaturation, setOxygenSaturation] = useState("");
+  const [heartRate, setHeartRate] = useState("");
+  const [respiratoryRate, setRespiratoryRate] = useState("");
+  const [glucose, setGlucose] = useState("");
+  const [visitDate, setVisitDate] = useState<string>(() => toLocalISODate(new Date()));
   const [patientQuery, setPatientQuery] = useState("");
   const [patientInputFocused, setPatientInputFocused] = useState(false);
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
+  const [historySortOrder, setHistorySortOrder] = useState<"desc" | "asc">(
+    "desc",
+  );
 
   const selectedPatient = useMemo(
     () => patients.find((p) => p.id === selectedPatientId) || null,
     [patients, selectedPatientId],
+  );
+
+  const requestedPatientId = useMemo(
+    () => (searchParams.get("patientId") || "").trim(),
+    [searchParams],
+  );
+
+  const orderedNotes = useMemo(
+    () => sortNotesByVisitDate(notes, historySortOrder),
+    [notes, historySortOrder],
   );
 
   function calcularEdadDetallada(fechaISO: string | Date) {
@@ -253,6 +374,15 @@ export default function HistoriasClinicasPage() {
   }, []);
 
   useEffect(() => {
+    if (!requestedPatientId || !patients.length) return;
+    if (selectedPatientId === requestedPatientId) return;
+    const targetPatient = patients.find((p) => p.id === requestedPatientId);
+    if (!targetPatient) return;
+    setSelectedPatientId(targetPatient.id);
+    setPatientQuery(targetPatient.fullName);
+  }, [patients, requestedPatientId, selectedPatientId]);
+
+  useEffect(() => {
     if (!selectedPatientId) {
       setNotes([]);
       setEditingNoteId(null);
@@ -261,27 +391,69 @@ export default function HistoriasClinicasPage() {
       setPhysicalExam("");
       setDiagnostics("");
       setDiagnosis("");
-      setTreatmentPlan("");
       setEvolutionNotes("");
+      setNursingNotes("");
+      setTreatmentNotes("");
+      setWeight("");
+      setHeight("");
+      setBodyTemperature("");
+      setBloodPressure("");
+      setOxygenSaturation("");
+      setHeartRate("");
+      setRespiratoryRate("");
+      setGlucose("");
+      setVisitDate(toLocalISODate(new Date()));
       return;
     }
 
     setLoadingNotes(true);
     setError(null);
     fetch(`/api/clinical-notes?patientId=${selectedPatientId}`)
-      .then((r) => r.json())
+      .then(async (r) => {
+        const txt = await r.text();
+        const data = txt
+          ? (() => {
+              try {
+                return JSON.parse(txt) as ClinicalNote[] | { error?: string };
+              } catch {
+                return { error: "Respuesta inválida del servidor." };
+              }
+            })()
+          : [];
+
+        if (!r.ok) {
+          const msg =
+            data && typeof data === "object" && "error" in data
+              ? String((data as { error?: unknown }).error ?? "")
+              : "";
+          throw new Error(msg || "No se pudieron cargar las historias clínicas.");
+        }
+
+        return Array.isArray(data) ? data : [];
+      })
       .then((data: ClinicalNote[]) => {
-        setNotes(data);
-        if (data && data.length > 0) {
-          const n = data[0];
+        const ordered = sortNotesByVisitDate(data ?? [], "desc");
+        setNotes(ordered);
+        if (ordered && ordered.length > 0) {
+          const n = ordered[0];
           setEditingNoteId(n.id);
           setConsultationReason(n.consultationReason ?? "");
           setCurrentIllness(n.currentIllness ?? "");
           setPhysicalExam(n.physicalExam ?? "");
           setDiagnostics(n.diagnostics ?? "");
           setDiagnosis(n.diagnosis ?? "");
-          setTreatmentPlan(n.treatmentPlan ?? "");
           setEvolutionNotes(n.evolutionNotes ?? "");
+          setNursingNotes(n.nursingNotes ?? "");
+          setTreatmentNotes(n.treatmentNotes ?? "");
+          setWeight(n.weight ?? "");
+          setHeight(n.height ?? "");
+          setBodyTemperature(n.bodyTemperature ?? "");
+          setBloodPressure(n.bloodPressure ?? "");
+          setOxygenSaturation(n.oxygenSaturation ?? "");
+          setHeartRate(n.heartRate ?? "");
+          setRespiratoryRate(n.respiratoryRate ?? "");
+          setGlucose(n.glucose ?? "");
+          setVisitDate(n.visitDate ?? toLocalISODate(new Date(n.createdAt)));
         } else {
           setEditingNoteId(null);
           setConsultationReason("");
@@ -289,23 +461,41 @@ export default function HistoriasClinicasPage() {
           setPhysicalExam("");
           setDiagnostics("");
           setDiagnosis("");
-          setTreatmentPlan("");
           setEvolutionNotes("");
+          setNursingNotes("");
+          setTreatmentNotes("");
+          setWeight("");
+          setHeight("");
+          setBodyTemperature("");
+          setBloodPressure("");
+          setOxygenSaturation("");
+          setHeartRate("");
+          setRespiratoryRate("");
+          setGlucose("");
+          setVisitDate(toLocalISODate(new Date()));
         }
       })
       .catch((err) => {
         console.error(err);
-        setError("No se pudieron cargar las historias clínicas.");
+        setError(
+          err instanceof Error && err.message
+            ? err.message
+            : "No se pudieron cargar las historias clínicas.",
+        );
       })
       .finally(() => setLoadingNotes(false));
   }, [selectedPatientId]);
 
   async function handleDeleteNote(id: string) {
     if (!window.confirm("¿Deseas eliminar esta historia clínica?")) return;
+    if (!selectedPatientId) return;
     try {
-      const res = await fetch(`/api/clinical-notes?id=${encodeURIComponent(id)}`, {
-        method: "DELETE",
-      });
+      const res = await fetch(
+        `/api/clinical-notes?id=${encodeURIComponent(id)}&patientId=${encodeURIComponent(
+          selectedPatientId,
+        )}`,
+        { method: "DELETE" },
+      );
       const payload = await res.json();
       if (!res.ok) {
         setError(payload?.error || "No se pudo eliminar la historia clínica.");
@@ -338,6 +528,9 @@ export default function HistoriasClinicasPage() {
       dateStyle: "medium",
       timeStyle: "short",
     });
+    const fechaAtencion = new Date(
+      (note.visitDate ?? note.createdAt.slice(0, 10)) + "T00:00:00",
+    ).toLocaleDateString("es-PE", { dateStyle: "medium" });
     const fechaImpresion = new Date().toLocaleString("es-PE", {
       dateStyle: "medium",
       timeStyle: "short",
@@ -353,6 +546,7 @@ export default function HistoriasClinicasPage() {
       note,
       patient,
       edadTexto,
+      fechaAtencion,
       fechaCreacion,
       fechaImpresion,
       logoUrl,
@@ -385,39 +579,79 @@ export default function HistoriasClinicasPage() {
         body: JSON.stringify({
           id: editingNoteId ?? undefined,
           patientId: selectedPatientId,
+            visitDate,
           consultationReason,
           currentIllness,
           physicalExam,
           diagnostics,
           diagnosis,
-          treatmentPlan,
           evolutionNotes,
+          nursingNotes,
+          treatmentNotes,
+          weight,
+          height,
+          bodyTemperature,
+          bloodPressure,
+          oxygenSaturation,
+          heartRate,
+          respiratoryRate,
+          glucose,
         }),
       });
-      const payload = await res.json();
+      const txt = await res.text();
+      const payload = txt
+        ? (() => {
+            try {
+              return JSON.parse(txt);
+            } catch {
+              return { error: "Respuesta inválida del servidor." };
+            }
+          })()
+        : null;
       if (!res.ok) {
         setError(
-          payload?.error ||
+          (payload as { error?: string } | null)?.error ||
             (isEditing
               ? "No se pudo actualizar la historia clínica."
               : "No se pudo guardar la historia clínica."),
         );
         return;
       }
+      if (!payload || typeof payload !== "object") {
+        setError("No se pudo guardar la historia clínica.");
+        return;
+      }
 
       setNotes((prev) =>
-        isEditing
-          ? prev.map((n) => (n.id === payload.id ? payload : n))
-          : [payload, ...prev],
+        sortNotesByVisitDate(
+          isEditing
+            ? prev.map((n) => (n.id === (payload as ClinicalNote).id ? (payload as ClinicalNote) : n))
+            : [(payload as ClinicalNote), ...prev],
+          "desc",
+        ),
       );
-      setEditingNoteId(null);
-      setConsultationReason("");
-      setCurrentIllness("");
-      setPhysicalExam("");
-      setDiagnostics("");
-      setDiagnosis("");
-      setTreatmentPlan("");
-      setEvolutionNotes("");
+      // Mantener la ficha seleccionada y reflejar los valores guardados.
+      const saved = payload as ClinicalNote;
+      setEditingNoteId(saved.id);
+      setConsultationReason(saved.consultationReason ?? "");
+      setCurrentIllness(saved.currentIllness ?? "");
+      setPhysicalExam(saved.physicalExam ?? "");
+      setDiagnostics(saved.diagnostics ?? "");
+      setDiagnosis(saved.diagnosis ?? "");
+      setEvolutionNotes(saved.evolutionNotes ?? "");
+      setNursingNotes(saved.nursingNotes ?? "");
+      setTreatmentNotes(saved.treatmentNotes ?? "");
+      setWeight(saved.weight ?? "");
+      setHeight(saved.height ?? "");
+      setBodyTemperature(saved.bodyTemperature ?? "");
+      setBloodPressure(saved.bloodPressure ?? "");
+      setOxygenSaturation(saved.oxygenSaturation ?? "");
+      setHeartRate(saved.heartRate ?? "");
+      setRespiratoryRate(saved.respiratoryRate ?? "");
+      setGlucose(saved.glucose ?? "");
+      setVisitDate(
+        saved.visitDate ?? toLocalISODate(new Date(saved.createdAt)),
+      );
     } catch (err) {
       console.error(err);
       setError("No se pudo guardar la historia clínica.");
@@ -427,7 +661,7 @@ export default function HistoriasClinicasPage() {
   }
 
   return (
-    <main className="space-y-4 p-6">
+    <main className="space-y-4 p-4 sm:p-6">
       <header className="space-y-1">
         <h1 className="text-2xl font-bold">Historias Clínicas</h1>
         <p className="text-sm text-slate-600">
@@ -470,7 +704,7 @@ export default function HistoriasClinicasPage() {
               </button>
             </div>
             {patientInputFocused && filteredPatients.length > 0 && (
-              <ul className="absolute z-10 mt-1 max-h-60 w-full overflow-y-auto rounded-lg border border-slate-300 bg-white text-xs shadow">
+              <ul className="absolute left-0 right-0 z-10 mt-1 max-h-60 w-full max-w-[calc(100vw-2rem)] overflow-y-auto rounded-lg border border-slate-300 bg-white text-xs shadow">
                 {filteredPatients.map((p) => (
                   <li
                     key={p.id}
@@ -536,6 +770,17 @@ export default function HistoriasClinicasPage() {
             <div className="space-y-2">
               <div className="space-y-1">
                 <label className="text-xs text-slate-600">
+                  Fecha de atención (ficha)
+                </label>
+                <input
+                  type="date"
+                  value={visitDate}
+                  onChange={(e) => setVisitDate(e.target.value)}
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs text-slate-600">
                   Motivo de consulta
                 </label>
                 <textarea
@@ -565,39 +810,83 @@ export default function HistoriasClinicasPage() {
                   placeholder="Signos vitales y hallazgos relevantes"
                 />
               </div>
+              <div className="space-y-1">
+                <label className="text-xs text-slate-600">
+                  Notas de Enfermería
+                </label>
+                <textarea
+                  className="min-h-[60px] w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                  value={nursingNotes}
+                  onChange={(e) => setNursingNotes(e.target.value)}
+                  placeholder="Observaciones y evolución por enfermería…"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs text-slate-600">
+                  Notas de tratamiento
+                </label>
+                <textarea
+                  className="min-h-[60px] w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                  value={treatmentNotes}
+                  onChange={(e) => setTreatmentNotes(e.target.value)}
+                  placeholder="Respuesta al tratamiento, indicaciones, etc…"
+                />
+              </div>
             </div>
 
             <div className="space-y-2">
               <div className="space-y-1">
-                <label className="text-xs text-slate-600">
-                  Resultados de pruebas / estudios
-                </label>
-                <textarea
-                  className="min-h-[60px] w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
-                  value={diagnostics}
-                  onChange={(e) => setDiagnostics(e.target.value)}
-                  placeholder="Laboratorio, imágenes, otros estudios"
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="text-xs text-slate-600">Diagnóstico</label>
-                <textarea
-                  className="min-h-[50px] w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
-                  value={diagnosis}
-                  onChange={(e) => setDiagnosis(e.target.value)}
-                  placeholder="Diagnóstico principal y diferenciales"
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="text-xs text-slate-600">
-                  Plan de tratamiento
-                </label>
-                <textarea
-                  className="min-h-[60px] w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
-                  value={treatmentPlan}
-                  onChange={(e) => setTreatmentPlan(e.target.value)}
-                  placeholder="Medicaciones, terapias, citas de control…"
-                />
+                <label className="text-xs text-slate-600">Signos vitales</label>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <input
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                    placeholder="Peso (ej. 72 kg)"
+                    value={weight}
+                    onChange={(e) => setWeight(e.target.value)}
+                  />
+                  <input
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                    placeholder="Talla (ej. 1.68 m)"
+                    value={height}
+                    onChange={(e) => setHeight(e.target.value)}
+                  />
+                  <input
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                    placeholder="Temperatura (ej. 36.7 °C)"
+                    value={bodyTemperature}
+                    onChange={(e) => setBodyTemperature(e.target.value)}
+                  />
+                  <input
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                    placeholder="Presión arterial (ej. 120/80)"
+                    value={bloodPressure}
+                    onChange={(e) => setBloodPressure(e.target.value)}
+                  />
+                  <input
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                    placeholder="Saturación (ej. 98%)"
+                    value={oxygenSaturation}
+                    onChange={(e) => setOxygenSaturation(e.target.value)}
+                  />
+                  <input
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                    placeholder="Frecuencia cardíaca (ej. 72 lpm)"
+                    value={heartRate}
+                    onChange={(e) => setHeartRate(e.target.value)}
+                  />
+                  <input
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                    placeholder="Frecuencia respiratoria (ej. 18 rpm)"
+                    value={respiratoryRate}
+                    onChange={(e) => setRespiratoryRate(e.target.value)}
+                  />
+                  <input
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                    placeholder="Glucosa (ej. 95 mg/dL)"
+                    value={glucose}
+                    onChange={(e) => setGlucose(e.target.value)}
+                  />
+                </div>
               </div>
               <div className="space-y-1">
                 <label className="text-xs text-slate-600">
@@ -621,8 +910,18 @@ export default function HistoriasClinicasPage() {
                       setPhysicalExam("");
                       setDiagnostics("");
                       setDiagnosis("");
-                      setTreatmentPlan("");
                       setEvolutionNotes("");
+                      setNursingNotes("");
+                      setTreatmentNotes("");
+                      setWeight("");
+                      setHeight("");
+                      setBodyTemperature("");
+                      setBloodPressure("");
+                      setOxygenSaturation("");
+                      setHeartRate("");
+                      setRespiratoryRate("");
+                      setGlucose("");
+                      setVisitDate(toLocalISODate(new Date()));
                     }}
                     className="rounded border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100"
                   >
@@ -651,9 +950,26 @@ export default function HistoriasClinicasPage() {
       </section>
 
       <section className="space-y-3 rounded-xl border border-slate-200 bg-white p-4 text-sm shadow-sm">
-        <h2 className="text-sm font-semibold text-slate-900">
-          Historial clínico
-        </h2>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+          <h2 className="text-sm font-semibold text-slate-900">
+            Historial clínico
+          </h2>
+          <div className="space-y-1">
+            <label className="block text-xs font-semibold text-slate-700">
+              Orden de fechas
+            </label>
+            <select
+              value={historySortOrder}
+              onChange={(e) =>
+                setHistorySortOrder(e.target.value as "desc" | "asc")
+              }
+              className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs"
+            >
+              <option value="desc">Más recientes primero</option>
+              <option value="asc">Más antiguas primero</option>
+            </select>
+          </div>
+        </div>
         {!selectedPatientId ? (
           <p className="text-xs text-slate-500">
             Selecciona un paciente para ver sus historias clínicas.
@@ -665,8 +981,87 @@ export default function HistoriasClinicasPage() {
             Aún no hay notas clínicas registradas para este paciente.
           </p>
         ) : (
-          <div className="max-h-[480px] space-y-2 overflow-y-auto">
-            {notes.map((n) => (
+          <div className="space-y-3">
+            <div className="flex flex-col gap-2">
+              <div className="flex flex-wrap gap-2">
+                {orderedNotes.map((n) => {
+                  const labelDate = n.visitDate
+                    ? new Date(n.visitDate + "T00:00:00")
+                    : new Date(n.createdAt);
+                  const label = labelDate.toLocaleDateString("es-PE", {
+                    day: "2-digit",
+                    month: "2-digit",
+                    year: "numeric",
+                  });
+                  const isActive = editingNoteId === n.id;
+                  return (
+                    <button
+                      key={n.id}
+                      type="button"
+                      onClick={() => {
+                        setEditingNoteId(n.id);
+                        setConsultationReason(n.consultationReason ?? "");
+                        setCurrentIllness(n.currentIllness ?? "");
+                        setPhysicalExam(n.physicalExam ?? "");
+                        setDiagnostics(n.diagnostics ?? "");
+                        setDiagnosis(n.diagnosis ?? "");
+                        setEvolutionNotes(n.evolutionNotes ?? "");
+                        setNursingNotes(n.nursingNotes ?? "");
+                        setTreatmentNotes(n.treatmentNotes ?? "");
+                        setWeight(n.weight ?? "");
+                        setHeight(n.height ?? "");
+                        setBodyTemperature(n.bodyTemperature ?? "");
+                        setBloodPressure(n.bloodPressure ?? "");
+                        setOxygenSaturation(n.oxygenSaturation ?? "");
+                        setHeartRate(n.heartRate ?? "");
+                        setRespiratoryRate(n.respiratoryRate ?? "");
+                        setGlucose(n.glucose ?? "");
+                        setVisitDate(
+                          n.visitDate ?? toLocalISODate(new Date(n.createdAt)),
+                        );
+                      }}
+                      className={
+                        isActive
+                          ? "rounded-full bg-amber-100 px-3 py-1 text-[11px] font-semibold text-amber-900"
+                          : "rounded-full bg-white px-3 py-1 text-[11px] font-semibold text-slate-700 border border-slate-200 hover:bg-slate-50"
+                      }
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingNoteId(null);
+                  setConsultationReason("");
+                  setCurrentIllness("");
+                  setPhysicalExam("");
+                  setDiagnostics("");
+                  setDiagnosis("");
+                  setEvolutionNotes("");
+                  setNursingNotes("");
+                  setTreatmentNotes("");
+                  setWeight("");
+                  setHeight("");
+                  setBodyTemperature("");
+                  setBloodPressure("");
+                  setOxygenSaturation("");
+                  setHeartRate("");
+                  setRespiratoryRate("");
+                  setGlucose("");
+                  setVisitDate(toLocalISODate(new Date()));
+                }}
+                className="self-start rounded bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800"
+              >
+                Nueva atención (nueva ficha)
+              </button>
+            </div>
+
+            <div className="max-h-[480px] space-y-2 overflow-y-auto">
+            {orderedNotes.map((n) => (
               <article
                 key={n.id}
                 className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs"
@@ -675,6 +1070,12 @@ export default function HistoriasClinicasPage() {
                   <div className="flex flex-col">
                     <span className="text-[11px] font-semibold uppercase text-slate-500">
                       N.º Historia clínica: {n.historyNumber}
+                    </span>
+                    <span className="text-[11px] text-slate-600">
+                      Fecha de atención:{" "}
+                      {new Date(
+                        (n.visitDate ?? n.createdAt.slice(0, 10)) + "T00:00:00",
+                      ).toLocaleDateString("es-PE", { dateStyle: "medium" })}
                     </span>
                     <span className="font-semibold text-slate-900">
                       {new Date(n.createdAt).toLocaleString("es-PE", {
@@ -705,8 +1106,20 @@ export default function HistoriasClinicasPage() {
                         setPhysicalExam(n.physicalExam ?? "");
                         setDiagnostics(n.diagnostics ?? "");
                         setDiagnosis(n.diagnosis ?? "");
-                        setTreatmentPlan(n.treatmentPlan ?? "");
                         setEvolutionNotes(n.evolutionNotes ?? "");
+                        setNursingNotes(n.nursingNotes ?? "");
+                        setTreatmentNotes(n.treatmentNotes ?? "");
+                        setWeight(n.weight ?? "");
+                        setHeight(n.height ?? "");
+                        setBodyTemperature(n.bodyTemperature ?? "");
+                        setBloodPressure(n.bloodPressure ?? "");
+                        setOxygenSaturation(n.oxygenSaturation ?? "");
+                        setHeartRate(n.heartRate ?? "");
+                        setRespiratoryRate(n.respiratoryRate ?? "");
+                        setGlucose(n.glucose ?? "");
+                        setVisitDate(
+                          n.visitDate ?? toLocalISODate(new Date(n.createdAt)),
+                        );
                       }}
                       className="rounded border border-slate-300 bg-white px-2 py-0.5 text-[10px] font-semibold text-slate-700 hover:bg-slate-100"
                     >
@@ -733,20 +1146,38 @@ export default function HistoriasClinicasPage() {
                     {n.currentIllness}
                   </p>
                 )}
-                {n.treatmentPlan && (
-                  <p className="mt-1 text-slate-700">
-                    <span className="font-semibold">Plan: </span>
-                    {n.treatmentPlan}
-                  </p>
-                )}
                 {n.evolutionNotes && (
                   <p className="mt-1 text-slate-700">
                     <span className="font-semibold">Evolución: </span>
                     {n.evolutionNotes}
                   </p>
                 )}
+                {(() => {
+                  const treatmentSplit = splitTreatmentNotesAndRecipe(
+                    n.treatmentNotes,
+                  );
+                  return (
+                    <>
+                      {treatmentSplit.treatmentNotes && (
+                        <p className="mt-1 text-slate-700 whitespace-pre-wrap">
+                          <span className="font-semibold">
+                            Notas de tratamiento:{" "}
+                          </span>
+                          {treatmentSplit.treatmentNotes}
+                        </p>
+                      )}
+                      {treatmentSplit.recipe && (
+                        <p className="mt-1 text-slate-700 whitespace-pre-wrap">
+                          <span className="font-semibold">Receta: </span>
+                          {treatmentSplit.recipe}
+                        </p>
+                      )}
+                    </>
+                  );
+                })()}
               </article>
             ))}
+            </div>
           </div>
         )}
       </section>

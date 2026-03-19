@@ -268,7 +268,7 @@ export default function FacturacionPage() {
   }
 
   return (
-    <main className="flex flex-col gap-6 p-6">
+    <main className="flex flex-col gap-6 p-4 sm:p-6">
       <header className="space-y-1">
         <h1 className="text-2xl font-bold">Facturación</h1>
         <p className="text-sm text-slate-600">
@@ -297,7 +297,7 @@ export default function FacturacionPage() {
         </div>
 
         <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="flex items-center justify-between gap-3">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <h2 className="text-sm font-semibold text-slate-900">
               Tickets/Boletas del {selectedDate.toLocaleDateString("es-PE")}
             </h2>
@@ -315,8 +315,8 @@ export default function FacturacionPage() {
               No hay Tickets/Boletas para esta fecha.
             </p>
           ) : (
-            <div className="max-h-[520px] overflow-y-auto rounded-xl border border-amber-100 bg-[#fbf7ee] p-3 shadow-inner">
-              <table className="min-w-full border-collapse text-sm">
+              <div className="max-h-[520px] overflow-x-auto overflow-y-auto rounded-xl border border-amber-100 bg-[#fbf7ee] p-3 shadow-inner">
+              <table className="min-w-[760px] border-collapse text-sm">
                 <thead>
                   <tr className="text-left">
                     <th className="py-2 pl-2 text-xs font-semibold uppercase tracking-wide text-slate-700">
@@ -367,7 +367,7 @@ export default function FacturacionPage() {
                         </div>
                       </td>
                       <td className="py-2 pr-2 text-right">
-                        <div className="flex justify-end gap-2">
+                        <div className="flex flex-wrap justify-end gap-2">
                           <button
                             type="button"
                             onClick={() => handlePrintTicket(t)}

@@ -13,6 +13,52 @@ registerLocale("es", es);
 
 type AppointmentWithPatient = Appointment & { patient: Patient };
 
+type ClinicalHistorySnapshot = {
+  id: string;
+  visitDate: string | null;
+  createdAt: string;
+  consultationReason: string | null;
+  currentIllness: string | null;
+  physicalExam: string | null;
+  diagnostics: string | null;
+  diagnosis: string | null;
+  treatmentPlan: string | null;
+  evolutionNotes: string | null;
+  nursingNotes: string | null;
+  treatmentNotes: string | null;
+  weight: string | null;
+  height: string | null;
+  bodyTemperature: string | null;
+  bloodPressure: string | null;
+  oxygenSaturation: string | null;
+  heartRate: string | null;
+  respiratoryRate: string | null;
+  glucose: string | null;
+};
+
+function safeJsonParse<T>(text: string, fallback: T): T {
+  if (!text) return fallback;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function mergeRecipeIntoTreatmentNotes(
+  currentNotes: string | null | undefined,
+  recipeText: string,
+) {
+  const recipe = recipeText.trim();
+  if (!recipe) return currentNotes ?? null;
+
+  const normalizedCurrent = (currentNotes ?? "").trim();
+  const block = `Receta:\n${recipe}`;
+  if (!normalizedCurrent) return block;
+  if (normalizedCurrent.includes(block)) return normalizedCurrent;
+  return `${normalizedCurrent}\n\n${block}`;
+}
+
 function AgendaPageInner() {
   const [patients, setPatients] = useState<Patient[]>([]);
   const [appointments, setAppointments] = useState<AppointmentWithPatient[]>([]);
@@ -26,6 +72,7 @@ function AgendaPageInner() {
   const [appointmentFormDate, setAppointmentFormDate] = useState<Date>(
     new Date(),
   );
+  const [nowTickMs, setNowTickMs] = useState(() => Date.now());
   const [reason, setReason] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [procedures, setProcedures] = useState<{ name: string; price: string }[]>(
@@ -37,6 +84,12 @@ function AgendaPageInner() {
 
   const searchParams = useSearchParams();
   const patientIdFromQuery = searchParams.get("patientId");
+
+  // Mantiene actualizada la hora para validar citas “desde el futuro”.
+  useEffect(() => {
+    const i = window.setInterval(() => setNowTickMs(Date.now()), 10_000);
+    return () => window.clearInterval(i);
+  }, []);
 
   const PROCEDIMIENTOS_STORAGE_KEY = "hc_procedimientos_precios_v1";
   const DEFAULT_PROCEDURES: { name: string; price: string }[] = [
@@ -75,6 +128,35 @@ function AgendaPageInner() {
     const day = String(d.getDate()).padStart(2, "0");
     return `${year}-${month}-${day}`;
   }
+
+  function roundUpToNextMinute(d: Date) {
+    const ms = d.getTime();
+    const roundedMs = Math.ceil(ms / 60000) * 60000; // siguiente minuto completo
+    return new Date(roundedMs);
+  }
+
+  function formatHHMM(d: Date) {
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mm = String(d.getMinutes()).padStart(2, "0");
+    return `${hh}:${mm}`;
+  }
+
+  const todayISO = useMemo(
+    () => toLocalISODate(new Date(nowTickMs)),
+    [nowTickMs],
+  );
+  const earliestStart = useMemo(
+    () => roundUpToNextMinute(new Date(nowTickMs)),
+    [nowTickMs],
+  );
+  const earliestStartHHMM = useMemo(
+    () => formatHHMM(earliestStart),
+    [earliestStart],
+  );
+  const isAppointmentDateToday = useMemo(
+    () => toLocalISODate(appointmentFormDate) === todayISO,
+    [appointmentFormDate, todayISO],
+  );
 
   function parseSolesToNumber(value: string) {
     const cleaned = value
@@ -147,6 +229,43 @@ function AgendaPageInner() {
       .then(setPatients)
       .catch(console.error);
   }, []);
+
+  // Mientras el formulario esté abierto en "hoy", aseguramos que la hora mínima
+  // sea a partir del siguiente minuto (ej. 13:41 -> 13:42).
+  useEffect(() => {
+    if (!showForm) return;
+    if (!isAppointmentDateToday) return;
+
+    const [h, m] = startTime.split(":").map((n) => Number(n));
+    if (!Number.isFinite(h) || !Number.isFinite(m)) return;
+
+    const candidate = new Date(
+      appointmentFormDate.getFullYear(),
+      appointmentFormDate.getMonth(),
+      appointmentFormDate.getDate(),
+      h,
+      m,
+      0,
+      0,
+    );
+
+    if (candidate.getTime() < earliestStart.getTime()) {
+      setStartTime(earliestStartHHMM);
+
+      const endCandidate = new Date(earliestStart.getTime() + 30 * 60_000);
+      if (toLocalISODate(endCandidate) === todayISO) {
+        setEndTime(formatHHMM(endCandidate));
+      }
+    }
+  }, [
+    showForm,
+    isAppointmentDateToday,
+    startTime,
+    appointmentFormDate,
+    earliestStart,
+    earliestStartHHMM,
+    todayISO,
+  ]);
 
   // Si vienes desde `Pacientes` con `?patientId=...`, abrimos el formulario y preseleccionamos.
   useEffect(() => {
@@ -437,7 +556,7 @@ function AgendaPageInner() {
 
     const texto = receta ? `Receta: ${receta}` : "";
 
-    const fullMessage = `Consultorio Dra Leidy Rosales, Buen día: Sr(a) ${patient.fullName} le hacemos saber que: ${texto}`;
+    const fullMessage = `Hamonia CenterH., Buen día: Sr(a) ${patient.fullName} le hacemos saber que: ${texto}`;
 
     const url = `https://wa.me/${waNumber}?text=${encodeURIComponent(
       fullMessage,
@@ -479,7 +598,7 @@ function AgendaPageInner() {
     const procedure = appt.type ? String(appt.type) : "Consulta médica";
 
     const texto = `le recordamos su cita médica para el ${dateText} a las ${time} (${procedure}).`;
-    const fullMessage = `Consultorio Dra Leidy Rosales, Buen día: Sr(a) ${patient.fullName} le hacemos saber que: ${texto}`;
+    const fullMessage = `Hamonia CenterH., Buen día: Sr(a) ${patient.fullName} le hacemos saber que: ${texto}`;
 
     const url = `https://wa.me/${waNumber}?text=${encodeURIComponent(
       fullMessage,
@@ -520,8 +639,26 @@ function AgendaPageInner() {
       return;
     }
     const d = appointmentFormDate;
+    const appointmentDateISO = toLocalISODate(d);
+    const currentDateISO = toLocalISODate(new Date());
+
+    if (appointmentDateISO < currentDateISO) {
+      setFormError("No se pueden crear citas en el pasado.");
+      return;
+    }
+
     const startAt = new Date(d.getFullYear(), d.getMonth(), d.getDate(), startH, startM, 0, 0);
     const endAt = new Date(d.getFullYear(), d.getMonth(), d.getDate(), endH, endM, 0, 0);
+
+    if (appointmentDateISO === currentDateISO) {
+      const earliestStartAt = roundUpToNextMinute(new Date());
+      if (startAt.getTime() < earliestStartAt.getTime()) {
+        setFormError(
+          `La hora mínima para hoy es ${formatHHMM(earliestStartAt)} (desde el siguiente minuto).`,
+        );
+        return;
+      }
+    }
 
     if (endAt <= startAt) {
       setFormError("La hora de fin debe ser mayor que la de inicio.");
@@ -637,6 +774,9 @@ function AgendaPageInner() {
   const [attentionWorkPlan, setAttentionWorkPlan] = useState("");
   const [attentionPrescription, setAttentionPrescription] = useState("");
   const [attentionError, setAttentionError] = useState<string | null>(null);
+  const [attentionClinicalSnapshot, setAttentionClinicalSnapshot] =
+    useState<ClinicalHistorySnapshot | null>(null);
+  const [attentionClinicalLoading, setAttentionClinicalLoading] = useState(false);
 
   const [showTicketModal, setShowTicketModal] = useState(false);
   const [ticketAppointment, setTicketAppointment] =
@@ -659,7 +799,7 @@ function AgendaPageInner() {
     Array<{ productId: number; name: string; unitPriceSoles: number }>
   >([]);
   const [ticketProductIdToAdd, setTicketProductIdToAdd] = useState<number | "">("");
-  const [ticketProductQtyToAdd, setTicketProductQtyToAdd] = useState<number>(1);
+  const [ticketProductQtyToAdd, setTicketProductQtyToAdd] = useState<string>("1");
   const [ticketExtraDetailToAdd, setTicketExtraDetailToAdd] = useState<string>(
     "",
   );
@@ -698,15 +838,38 @@ function AgendaPageInner() {
     setAttentionAppointmentId(a.id);
     setShowAttention(true);
     setAttentionTab("nueva");
+    setAttentionClinicalSnapshot(null);
+    setAttentionClinicalLoading(true);
 
-    // cargar recetas registradas para esta cita
-    try {
-      const r = await fetch(`/api/recipes?appointmentId=${a.id}`);
-      const data = (await r.json()) as Recipe[];
-      setRecipes(Array.isArray(data) ? data : []);
-    } catch {
+    // Cargamos recetas de la cita y última historia clínica del paciente.
+    const [recipesRes, historyRes] = await Promise.allSettled([
+      fetch(`/api/recipes?appointmentId=${a.id}`),
+      fetch(`/api/clinical-notes?patientId=${encodeURIComponent(a.patientId)}`),
+    ]);
+
+    if (recipesRes.status === "fulfilled") {
+      try {
+        const data = (await recipesRes.value.json()) as Recipe[];
+        setRecipes(Array.isArray(data) ? data : []);
+      } catch {
+        setRecipes([]);
+      }
+    } else {
       setRecipes([]);
     }
+
+    if (historyRes.status === "fulfilled") {
+      try {
+        const raw = (await historyRes.value.json()) as unknown;
+        const visits = Array.isArray(raw) ? (raw as ClinicalHistorySnapshot[]) : [];
+        setAttentionClinicalSnapshot(visits[0] ?? null);
+      } catch {
+        setAttentionClinicalSnapshot(null);
+      }
+    } else {
+      setAttentionClinicalSnapshot(null);
+    }
+    setAttentionClinicalLoading(false);
 
     setAttentionDiagnosis("");
     setAttentionWorkPlan("");
@@ -741,7 +904,7 @@ function AgendaPageInner() {
     setProductCatalog(prods);
     setTicketItems([]);
     setTicketProductIdToAdd("");
-    setTicketProductQtyToAdd(1);
+    setTicketProductQtyToAdd("1");
 
     // Si ya existe un ticket guardado para esta cita, lo cargamos en el modal.
     try {
@@ -791,7 +954,7 @@ function AgendaPageInner() {
     const product = productCatalog.find((p) => p.productId === ticketProductIdToAdd);
     if (!product) return;
 
-    const qty = Number(ticketProductQtyToAdd);
+    const qty = Number.parseInt(ticketProductQtyToAdd, 10);
     if (!Number.isFinite(qty) || qty <= 0) return;
 
     const existing = ticketItems.find(
@@ -822,7 +985,7 @@ function AgendaPageInner() {
         quantity: Math.floor(qty),
       },
     ]);
-    setTicketProductQtyToAdd(1);
+    setTicketProductQtyToAdd("1");
   }
 
   function handleAddExtraProductLine() {
@@ -1330,6 +1493,59 @@ function AgendaPageInner() {
 
       const payload = payloadUnknown as Recipe;
       setRecipes((prev) => [payload, ...prev]);
+
+      // Sincroniza el diagnóstico de Atención con la historia clínica del día.
+      try {
+        const targetVisitDate = toLocalISODate(new Date(appt.startAt));
+        const notesRes = await fetch(
+          `/api/clinical-notes?patientId=${encodeURIComponent(appt.patientId)}`,
+        );
+        const notesTxt = await notesRes.text();
+        const notesData = safeJsonParse<ClinicalHistorySnapshot[] | { error?: string }>(
+          notesTxt,
+          [],
+        );
+
+        if (notesRes.ok && Array.isArray(notesData)) {
+          const sameDayVisit = notesData.find((n) => n.visitDate === targetVisitDate);
+
+          if (sameDayVisit) {
+            await fetch("/api/clinical-notes", {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                id: sameDayVisit.id,
+                patientId: appt.patientId,
+                diagnosis: attentionDiagnosis.trim(),
+                treatmentPlan: attentionWorkPlan.trim() || null,
+                treatmentNotes: mergeRecipeIntoTreatmentNotes(
+                  sameDayVisit.treatmentNotes,
+                  attentionPrescription,
+                ),
+              }),
+            });
+          } else {
+            await fetch("/api/clinical-notes", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                patientId: appt.patientId,
+                visitDate: targetVisitDate,
+                appointmentId: appt.id,
+                diagnosis: attentionDiagnosis.trim(),
+                treatmentPlan: attentionWorkPlan.trim() || null,
+                treatmentNotes: mergeRecipeIntoTreatmentNotes(
+                  null,
+                  attentionPrescription,
+                ),
+              }),
+            });
+          }
+        }
+      } catch {
+        // No bloqueamos la receta si falla la sincronización de historia.
+      }
+
       // Actualizar estado de la cita en pantalla (verde) al concluir con receta
       setAppointments((prev) =>
         prev.map((a) =>
@@ -1392,8 +1608,8 @@ function AgendaPageInner() {
   }, [ticketTotalSoles, ticketPagosManual]);
 
   return (
-    <main className="flex flex-col gap-6 p-6">
-      <header className="flex items-center justify-between">
+    <main className="flex flex-col gap-6 p-4 sm:p-6">
+      <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold">Agenda</h1>
           <p className="text-sm text-slate-600">
@@ -1481,13 +1697,24 @@ function AgendaPageInner() {
                     >
                       {a.status}
                     </span>
-                    <div className="flex gap-1">
+                    <div className="flex flex-wrap justify-end gap-1">
                       <button
                         type="button"
                         onClick={() => openAttentionForAppointment(a)}
                         className="rounded border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-900 hover:bg-amber-100"
                       >
                         Atención
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          window.location.href = `/historias?patientId=${encodeURIComponent(
+                            a.patientId,
+                          )}`;
+                        }}
+                        className="rounded border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[10px] font-semibold text-indigo-900 hover:bg-indigo-100"
+                      >
+                        Historia Clínica
                       </button>
                       <button
                         type="button"
@@ -1554,8 +1781,8 @@ function AgendaPageInner() {
       </section>
 
       {showForm && (
-        <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/40">
-          <div className="w-full max-w-md rounded-xl bg-white p-5 shadow-lg">
+        <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/40 p-3 sm:p-4">
+          <div className="w-full max-w-md max-h-[90vh] overflow-y-auto rounded-xl bg-white p-4 sm:p-5 shadow-lg">
             <div className="mb-3 flex items-center justify-between">
               <h2 className="text-lg font-semibold">
                 {editingId ? "Editar cita médica" : "Nueva cita médica"}
@@ -1573,6 +1800,7 @@ function AgendaPageInner() {
                 <label className="block text-xs text-slate-600">Fecha</label>
                 <input
                   type="date"
+                  min={todayISO}
                   className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
                   value={appointmentFormDateISO}
                   onChange={(e) => {
@@ -1640,6 +1868,7 @@ function AgendaPageInner() {
                   <label className="block text-xs text-slate-600">Hora inicio</label>
                   <input
                     type="time"
+                    min={isAppointmentDateToday ? earliestStartHHMM : "00:00"}
                     className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
                     value={startTime}
                     onChange={(e) => handleStartTimeChange(e.target.value)}
@@ -1649,6 +1878,7 @@ function AgendaPageInner() {
                   <label className="block text-xs text-slate-600">Hora fin</label>
                   <input
                     type="time"
+                    min={isAppointmentDateToday ? startTime : "00:00"}
                     className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
                     value={endTime}
                     onChange={(e) => setEndTime(e.target.value)}
@@ -1697,7 +1927,7 @@ function AgendaPageInner() {
 
       {showAttention && (
         <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-3xl overflow-hidden rounded-xl bg-white shadow-lg">
+          <div className="flex max-h-[85vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl bg-white shadow-lg">
             <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 p-4">
               <h2 className="text-lg font-semibold text-slate-900">
                 Atención médica
@@ -1716,7 +1946,7 @@ function AgendaPageInner() {
               </button>
             </div>
 
-            <div className="p-4">
+            <div className="overflow-y-auto p-4">
               <div className="mb-3 flex gap-2">
                 <button
                   type="button"
@@ -1784,6 +2014,75 @@ function AgendaPageInner() {
                           </p>
                         </div>
                       </div>
+                    </div>
+
+                    <div className="rounded-xl border border-indigo-100 bg-indigo-50/50 p-3 mb-4">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-indigo-700">
+                        Datos previos de historia clínica
+                      </p>
+                      {attentionClinicalLoading ? (
+                        <p className="mt-1 text-xs text-slate-600">
+                          Cargando última atención...
+                        </p>
+                      ) : (() => {
+                          const snapshot = attentionClinicalSnapshot;
+                          if (!snapshot) {
+                            return (
+                              <p className="mt-1 text-xs text-slate-600">
+                                Este paciente aún no tiene datos previos en su historia clínica.
+                              </p>
+                            );
+                          }
+
+                          const fields = [
+                            ["Fecha de atención", snapshot.visitDate],
+                            ["Motivo de consulta", snapshot.consultationReason],
+                            ["Enfermedad actual", snapshot.currentIllness],
+                            ["Examen físico", snapshot.physicalExam],
+                            ["Diagnóstico", snapshot.diagnosis],
+                            ["Plan de tratamiento", snapshot.treatmentPlan],
+                            ["Evolución", snapshot.evolutionNotes],
+                            ["Notas de Enfermería", snapshot.nursingNotes],
+                            ["Notas de tratamiento", snapshot.treatmentNotes],
+                            ["Peso", snapshot.weight],
+                            ["Talla", snapshot.height],
+                            ["Temperatura corporal", snapshot.bodyTemperature],
+                            ["Presión arterial", snapshot.bloodPressure],
+                            ["Saturación", snapshot.oxygenSaturation],
+                            ["Frecuencia cardíaca", snapshot.heartRate],
+                            ["Frecuencia respiratoria", snapshot.respiratoryRate],
+                            ["Glucosa", snapshot.glucose],
+                          ].filter(([, value]) => {
+                            if (value == null) return false;
+                            return String(value).trim().length > 0;
+                          });
+
+                          if (!fields.length) {
+                            return (
+                              <p className="mt-1 text-xs text-slate-600">
+                                La última atención no tiene campos llenados para mostrar.
+                              </p>
+                            );
+                          }
+
+                          return (
+                            <div className="mt-2 grid gap-2 md:grid-cols-2">
+                              {fields.map(([label, value]) => (
+                                <div
+                                  key={label}
+                                  className="rounded-lg border border-indigo-100 bg-white px-2 py-1.5"
+                                >
+                                  <p className="text-[11px] font-semibold text-indigo-800">
+                                    {label}
+                                  </p>
+                                  <p className="text-xs text-slate-700 whitespace-pre-wrap">
+                                    {value}
+                                  </p>
+                                </div>
+                              ))}
+                            </div>
+                          );
+                        })()}
                     </div>
 
                     {attentionTab === "nueva" ? (
@@ -1992,7 +2291,6 @@ function AgendaPageInner() {
                     min="0"
                     className="w-32 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
                     value={Number.isFinite(ticketProcedureUnitPriceSoles) ? ticketProcedureUnitPriceSoles : 0}
-                    disabled
                     onChange={(e) => {
                       const v = Number(e.target.value);
                       setTicketProcedureUnitPriceSoles(Number.isFinite(v) ? v : 0);
@@ -2034,10 +2332,11 @@ function AgendaPageInner() {
                       min="1"
                       step="1"
                       value={ticketProductQtyToAdd}
-                      disabled
                       onChange={(e) => {
-                        const v = Number(e.target.value);
-                        setTicketProductQtyToAdd(Number.isFinite(v) ? v : 1);
+                        const normalized = e.target.value
+                          .replace(/[^\d]/g, "")
+                          .replace(/^0+(?=\d)/, "");
+                        setTicketProductQtyToAdd(normalized);
                       }}
                       className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
                     />

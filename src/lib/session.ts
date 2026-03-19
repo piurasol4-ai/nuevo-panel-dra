@@ -12,7 +12,12 @@ export type SessionPayload = {
 export const SESSION_COOKIE_NAME = "hc_session";
 
 function getSecret() {
-  const secret = process.env.JWT_SECRET || "dev-secret-change-me";
+  const secret = process.env.JWT_SECRET;
+  if (!secret) {
+    throw new Error(
+      "Missing JWT_SECRET. Configure it in .env (e.g. .env.local).",
+    );
+  }
   return new TextEncoder().encode(secret);
 }
 

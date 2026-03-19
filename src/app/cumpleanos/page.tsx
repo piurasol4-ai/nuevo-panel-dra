@@ -37,7 +37,7 @@ export default function CumpleanosPage() {
       return;
     }
 
-    const defaultMessage = `Consultorio Dra Leidy Rosales, ¡Feliz Cumpleaños! Sr(a) ${patient.fullName}. Le deseamos un maravilloso día.`;
+    const defaultMessage = `Hamonia CenterH., ¡Feliz Cumpleaños! Sr(a) ${patient.fullName}. Le deseamos un maravilloso día.`;
     const custom = messageByPatient[patient.id] || "";
 
     const fullMessage = custom.trim() ? custom.trim() : defaultMessage;
@@ -53,7 +53,7 @@ export default function CumpleanosPage() {
   }
 
   return (
-    <main className="space-y-4 p-6 text-sm">
+    <main className="space-y-4 p-4 text-sm sm:p-6">
       <header className="space-y-1">
         <h1 className="text-2xl font-bold">Cumpleaños</h1>
         <p className="text-sm text-slate-600">
@@ -104,7 +104,7 @@ export default function CumpleanosPage() {
           </div>
 
           <div className="max-h-[480px] overflow-x-auto overflow-y-auto">
-            <table className="min-w-full border-collapse text-xs">
+            <table className="min-w-[760px] border-collapse text-xs">
               <thead>
                 <tr className="bg-slate-50 text-left">
                   <th className="border-b border-slate-200 px-2 py-1">Nombre</th>
@@ -132,10 +132,10 @@ export default function CumpleanosPage() {
                     </td>
                     <td className="border-b border-slate-100 px-2 py-1">
                       <input
-                        className="w-full rounded border border-slate-300 px-2 py-1"
+                        className="min-w-[220px] w-full rounded border border-slate-300 px-2 py-1"
                         value={
                           messageByPatient[p.id] ??
-                          `Consultorio Dra Leidy Rosales, ¡Feliz Cumpleaños! Sr(a) ${p.fullName}. Le deseamos un maravilloso día.`
+                          `Hamonia CenterH., ¡Feliz Cumpleaños! Sr(a) ${p.fullName}. Le deseamos un maravilloso día.`
                         }
                         onChange={(e) =>
                           setMessageByPatient((prev) => ({

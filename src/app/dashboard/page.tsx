@@ -36,7 +36,7 @@ export default async function DashboardPage() {
   });
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 p-4 sm:p-6">
       <header className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-4">
           <div className="h-24 w-24 overflow-hidden rounded-xl border border-amber-400 bg-black">

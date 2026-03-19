@@ -269,7 +269,7 @@ export default function PatientsPage() {
   });
 
   return (
-    <main className="p-6 space-y-6">
+    <main className="space-y-6 p-4 sm:p-6">
       <h1 className="text-2xl font-bold">
         {editingId ? "Editar paciente" : "Paciente nuevo"}
       </h1>
@@ -280,8 +280,8 @@ export default function PatientsPage() {
         className="grid gap-4 lg:grid-cols-2 lg:items-start"
       >
         <div className="space-y-3">
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-600 whitespace-nowrap">DNI</span>
+          <div className="flex flex-col items-stretch gap-1 sm:flex-row sm:items-center sm:gap-2">
+            <span className="text-xs text-slate-600 sm:whitespace-nowrap">DNI</span>
             <input
               className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
               placeholder="Número de documento"
@@ -306,8 +306,8 @@ export default function PatientsPage() {
             <p className="text-xs text-red-600">{dniError || formErrors.dni}</p>
           )}
 
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-600 whitespace-nowrap">
+          <div className="flex flex-col items-stretch gap-1 sm:flex-row sm:items-center sm:gap-2">
+            <span className="text-xs text-slate-600 sm:whitespace-nowrap">
               Nombre
             </span>
             <input
@@ -322,8 +322,8 @@ export default function PatientsPage() {
           )}
 
           <div className="space-y-2">
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-600 whitespace-nowrap">
+            <div className="flex flex-col items-stretch gap-1 sm:flex-row sm:items-center sm:gap-2">
+              <span className="text-xs text-slate-600 sm:whitespace-nowrap">
                 Fecha de Nacimiento
               </span>
               <DatePicker
@@ -342,12 +342,12 @@ export default function PatientsPage() {
             {formErrors.birthDate && (
               <p className="text-xs text-red-600">{formErrors.birthDate}</p>
             )}
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-600 whitespace-nowrap">
+            <div className="flex flex-col items-stretch gap-1 sm:flex-row sm:items-center sm:gap-2">
+              <span className="text-xs text-slate-600 sm:whitespace-nowrap">
                 Edad
               </span>
               <input
-                className="w-56 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm"
+                className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm sm:w-56"
                 placeholder="años, meses y días"
                 value={birthDate ? calcularEdadDetallada(birthDate) : ""}
                 readOnly
@@ -355,8 +355,8 @@ export default function PatientsPage() {
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-600 whitespace-nowrap">
+          <div className="flex flex-col items-stretch gap-1 sm:flex-row sm:items-center sm:gap-2">
+            <span className="text-xs text-slate-600 sm:whitespace-nowrap">
               Celular
             </span>
             <input
@@ -375,8 +375,8 @@ export default function PatientsPage() {
             <p className="text-xs text-red-600">{formErrors.phone}</p>
           )}
 
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-600 whitespace-nowrap">
+          <div className="flex flex-col items-stretch gap-1 sm:flex-row sm:items-center sm:gap-2">
+            <span className="text-xs text-slate-600 sm:whitespace-nowrap">
               Estado
             </span>
             <select
@@ -391,8 +391,8 @@ export default function PatientsPage() {
             </select>
           </div>
 
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-600 whitespace-nowrap">
+          <div className="flex flex-col items-stretch gap-1 sm:flex-row sm:items-center sm:gap-2">
+            <span className="text-xs text-slate-600 sm:whitespace-nowrap">
               ¿Cómo nos conoció?
             </span>
             <select
@@ -414,8 +414,8 @@ export default function PatientsPage() {
             </select>
           </div>
 
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-600 whitespace-nowrap">
+          <div className="flex flex-col items-stretch gap-1 sm:flex-row sm:items-center sm:gap-2">
+            <span className="text-xs text-slate-600 sm:whitespace-nowrap">
               Dirección
             </span>
             <input
@@ -426,8 +426,8 @@ export default function PatientsPage() {
             />
           </div>
 
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-600 whitespace-nowrap">
+          <div className="flex flex-col items-stretch gap-1 sm:flex-row sm:items-center sm:gap-2">
+            <span className="text-xs text-slate-600 sm:whitespace-nowrap">
               Contacto Emergencia
             </span>
             <input
@@ -438,8 +438,8 @@ export default function PatientsPage() {
             />
           </div>
 
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-600 whitespace-nowrap">
+          <div className="flex flex-col items-stretch gap-1 sm:flex-row sm:items-center sm:gap-2">
+            <span className="text-xs text-slate-600 sm:whitespace-nowrap">
               Teléfono de Emergencia
             </span>
             <input
@@ -458,7 +458,7 @@ export default function PatientsPage() {
             <p className="text-xs text-red-600">{formErrors.emergencyPhone}</p>
           )}
 
-          <div className="flex gap-2 pt-1">
+          <div className="flex flex-wrap gap-2 pt-1">
             <button
               className="rounded bg-amber-500 px-4 py-2 text-sm font-semibold text-black"
               type="submit"
@@ -569,7 +569,7 @@ export default function PatientsPage() {
           <p className="text-slate-500">Aún no hay pacientes registrados.</p>
         ) : (
           <div className="max-h-[480px] overflow-x-auto overflow-y-auto">
-            <table className="min-w-full border-collapse">
+            <table className="min-w-[760px] border-collapse">
               <thead>
                 <tr className="bg-slate-50 text-left">
                   <th className="border-b border-slate-200 px-2 py-1">Nombre</th>
@@ -599,33 +599,35 @@ export default function PatientsPage() {
                         {edad !== null ? `${edad} años` : "—"}
                       </td>
                       <td className="border-b border-slate-100 px-2 py-1 text-right">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            router.push(
-                              `/agenda?patientId=${encodeURIComponent(
-                                p.id,
-                              )}`,
-                            )
-                          }
-                          className="mr-2 rounded border border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] font-medium text-sky-800 hover:bg-sky-100"
-                        >
-                          Nueva Cita
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleEdit(p)}
-                          className="mr-2 rounded border border-slate-300 px-2 py-0.5 text-[11px] font-medium text-slate-800 hover:bg-slate-100"
-                        >
-                          Editar
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleDelete(p.id)}
-                          className="rounded bg-red-600 px-2 py-0.5 text-[11px] font-medium text-white hover:bg-red-700"
-                        >
-                          Borrar
-                        </button>
+                        <div className="flex flex-wrap justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              router.push(
+                                `/agenda?patientId=${encodeURIComponent(
+                                  p.id,
+                                )}`,
+                              )
+                            }
+                            className="rounded border border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] font-medium text-sky-800 hover:bg-sky-100"
+                          >
+                            Nueva Cita
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleEdit(p)}
+                            className="rounded border border-slate-300 px-2 py-0.5 text-[11px] font-medium text-slate-800 hover:bg-slate-100"
+                          >
+                            Editar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDelete(p.id)}
+                            className="rounded bg-red-600 px-2 py-0.5 text-[11px] font-medium text-white hover:bg-red-700"
+                          >
+                            Borrar
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );

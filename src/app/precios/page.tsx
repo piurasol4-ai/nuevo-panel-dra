@@ -114,7 +114,7 @@ export default function PreciosPage() {
   }
 
   return (
-    <main className="space-y-4 p-6">
+    <main className="space-y-4 p-4 sm:p-6">
       <header>
         <h1 className="text-2xl font-bold">Precios Harmonia Center</h1>
         <p className="text-sm text-slate-600">
@@ -133,7 +133,7 @@ export default function PreciosPage() {
           </button>
         </div>
         <div className="max-h-[480px] overflow-x-auto overflow-y-auto">
-          <table className="min-w-full border-collapse text-sm">
+          <table className="min-w-[640px] border-collapse text-sm">
             <thead>
               <tr className="bg-slate-100">
                 <th className="border border-slate-300 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide">
@@ -176,11 +176,11 @@ export default function PreciosPage() {
                   </td>
                   <td className="border border-slate-200 px-3 py-1.5 text-right">
                     {editingId === row.id ? (
-                      <>
+                      <div className="flex flex-wrap justify-end gap-2">
                         <button
                           type="button"
                           onClick={() => setEditingId(null)}
-                          className="mr-2 rounded border border-slate-300 px-2 py-1 text-[11px] font-semibold text-slate-800 hover:bg-slate-100"
+                          className="rounded border border-slate-300 px-2 py-1 text-[11px] font-semibold text-slate-800 hover:bg-slate-100"
                         >
                           Guardar
                         </button>
@@ -191,13 +191,13 @@ export default function PreciosPage() {
                         >
                           Borrar
                         </button>
-                      </>
+                      </div>
                     ) : (
-                      <>
+                      <div className="flex flex-wrap justify-end gap-2">
                         <button
                           type="button"
                           onClick={() => setEditingId(row.id)}
-                          className="mr-2 rounded border border-slate-300 px-2 py-1 text-[11px] font-semibold text-slate-800 hover:bg-slate-100"
+                          className="rounded border border-slate-300 px-2 py-1 text-[11px] font-semibold text-slate-800 hover:bg-slate-100"
                         >
                           Editar
                         </button>
@@ -208,7 +208,7 @@ export default function PreciosPage() {
                         >
                           Borrar
                         </button>
-                      </>
+                      </div>
                     )}
                   </td>
                 </tr>

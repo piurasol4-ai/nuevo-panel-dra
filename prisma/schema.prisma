@@ -70,6 +70,11 @@ model ClinicalNote {
   historyNumber Int      @unique @default(autoincrement())
   createdAt     DateTime @default(now())
 
+  // Una sola historia por paciente, pero con múltiples atenciones/fichas
+  // almacenadas como arreglo en JSON.
+  visits        Json?
+
+  // --- Ficha de atención (por visita) ---
   identificationExtra String?
   personalHistory     String?
   familyHistory       String?
@@ -80,6 +85,18 @@ model ClinicalNote {
   diagnosis           String?
   treatmentPlan       String?
   evolutionNotes      String?
+
+  // Campos extra solicitados por cada atención/ficha
+  nursingNotes         String? // Notas de Enfermería
+  treatmentNotes       String? // Notas de tratamiento
+  weight               String? // Peso (unidades libres, p.ej. "72 kg")
+  height               String? // Talla (p.ej. "1.68 m")
+  bodyTemperature      String? // Temperatura corporal (p.ej. "36.7 °C")
+  bloodPressure        String? // Presión arterial (p.ej. "120/80")
+  oxygenSaturation     String? // Saturación (p.ej. "98%")
+  heartRate            String? // Frecuencia cardíaca (p.ej. "72 lpm")
+  respiratoryRate      String? // Frecuencia respiratoria (p.ej. "18 rpm")
+  glucose              String? // Glucosa (p.ej. "95 mg/dL")
 
   patient     Patient      @relation(fields: [patientId], references: [id])
   appointment Appointment? @relation(fields: [appointmentId], references: [id])

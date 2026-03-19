@@ -1,7 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRef } from "react";
 import type { Appointment, Patient } from "@prisma/client";
+import DatePicker, { registerLocale } from "react-datepicker";
+import { es } from "date-fns/locale/es";
+
+import "react-datepicker/dist/react-datepicker.css";
+
+registerLocale("es", es);
 
 type Recipe = {
   id: string;
@@ -162,17 +169,41 @@ function buildRecipePrintHtml(params: {
 }
 
 export default function RecetasPage() {
-  const today = useMemo(() => toLocalISODate(new Date()), []);
+  const [selectedDate, setSelectedDate] = useState<Date>(() => new Date());
+  const selectedDateISO = useMemo(
+    () => toLocalISODate(selectedDate),
+    [selectedDate],
+  );
   const [recipes, setRecipes] = useState<Recipe[]>([]);
+  const [patients, setPatients] = useState<Patient[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [activeSearchPatient, setActiveSearchPatient] = useState<Patient | null>(
+    null,
+  );
+  const [patientCandidates, setPatientCandidates] = useState<Patient[]>([]);
+  const [showPatientCandidates, setShowPatientCandidates] = useState(false);
+  const searchDebounceRef = useRef<number | null>(null);
+
+  async function ensurePatientsLoaded() {
+    if (patients.length > 0) return;
+    const r = await fetch("/api/patients");
+    const data = (await r.json().catch(() => null)) as Patient[] | null;
+    setPatients(Array.isArray(data) ? data : []);
+  }
 
   useEffect(() => {
+    if (activeSearchPatient) return;
+
     Promise.resolve().then(() => {
       setLoading(true);
       setError(null);
     });
-    fetch(`/api/recipes?date=${today}`)
+
+    fetch(`/api/recipes?date=${selectedDateISO}`)
       .then(async (r) => {
         const data = await r.json().catch(() => null);
         if (!r.ok) {
@@ -186,7 +217,131 @@ export default function RecetasPage() {
         setError("No se pudieron cargar las recetas.");
       })
       .finally(() => setLoading(false));
-  }, [today]);
+  }, [selectedDateISO, activeSearchPatient]);
+
+  async function loadRecipesForPatient(patientId: string) {
+    setLoading(true);
+    setError(null);
+
+    try {
+      const r = await fetch(`/api/recipes?patientId=${encodeURIComponent(patientId)}`);
+      const data = await r.json().catch(() => null);
+      if (!r.ok) {
+        setError(data?.error || "No se pudieron cargar las recetas.");
+        setRecipes([]);
+        return;
+      }
+      setRecipes(Array.isArray(data) ? data : []);
+    } catch (e) {
+      console.error(e);
+      setError("No se pudieron cargar las recetas.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleSearchRecipes() {
+    const term = searchTerm.trim();
+    const termAtTrigger = term;
+    setSearchError(null);
+    setShowPatientCandidates(false);
+    setActiveSearchPatient(null);
+    setRecipes([]);
+
+    if (!term) {
+      setSearchError("Escribe un DNI (8 dígitos) o el nombre del paciente.");
+      return;
+    }
+
+    setSearchLoading(true);
+    try {
+      await ensurePatientsLoaded();
+      if (termAtTrigger !== searchTerm.trim()) return;
+
+      const lower = term.toLowerCase();
+      const digits = term.replace(/\D/g, "");
+
+      let candidates: Patient[] = [];
+      if (digits.length === 8) {
+        candidates = patients.filter((p) => p.dni === digits);
+      } else {
+        candidates = patients.filter(
+          (p) =>
+            p.fullName.toLowerCase().includes(lower) ||
+            (digits ? p.dni.includes(digits) : false),
+        );
+      }
+
+      if (candidates.length === 0) {
+        if (termAtTrigger !== searchTerm.trim()) return;
+        setSearchError("No se encontró un paciente con ese DNI o nombre.");
+        setActiveSearchPatient(null);
+        return;
+      }
+
+      if (candidates.length === 1) {
+        if (termAtTrigger !== searchTerm.trim()) return;
+        const chosen = candidates[0];
+        setActiveSearchPatient(chosen);
+        await loadRecipesForPatient(chosen.id);
+        return;
+      }
+
+      if (termAtTrigger !== searchTerm.trim()) return;
+      setPatientCandidates(candidates.slice(0, 10));
+      setShowPatientCandidates(true);
+    } catch (e) {
+      console.error(e);
+      setSearchError("No se pudo realizar la búsqueda.");
+    } finally {
+      setSearchLoading(false);
+    }
+  }
+
+  function handleClearSearch() {
+    setActiveSearchPatient(null);
+    setSearchTerm("");
+    setSearchError(null);
+    setPatientCandidates([]);
+    setShowPatientCandidates(false);
+    setError(null);
+    setRecipes([]);
+  }
+
+  // Búsqueda automática mientras el usuario escribe.
+  useEffect(() => {
+    const term = searchTerm.trim();
+    if (!term) {
+      if (searchDebounceRef.current) {
+        window.clearTimeout(searchDebounceRef.current);
+      }
+
+      // Volvemos al modo por fecha al limpiar la búsqueda.
+      setSearchError(null);
+      setSearchLoading(false);
+      setActiveSearchPatient(null);
+      setPatientCandidates([]);
+      setShowPatientCandidates(false);
+      setError(null);
+      setRecipes([]);
+      return;
+    }
+
+    if (searchDebounceRef.current) {
+      window.clearTimeout(searchDebounceRef.current);
+    }
+
+    searchDebounceRef.current = window.setTimeout(() => {
+      void handleSearchRecipes();
+    }, 350);
+
+    return () => {
+      if (searchDebounceRef.current) {
+        window.clearTimeout(searchDebounceRef.current);
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchTerm]);
 
   function handlePrintRecipe(r: Recipe) {
     if (!r.patient) return;
@@ -255,7 +410,7 @@ export default function RecetasPage() {
       : `51${phoneDigits}`;
 
     const texto = `Receta: ${receta}`;
-    const fullMessage = `Consultorio Dra Leidy Rosales, Buen día: Sr(a) ${patient.fullName} le hacemos saber que: ${texto}`;
+    const fullMessage = `Hamonia CenterH., Buen día: Sr(a) ${patient.fullName} le hacemos saber que: ${texto}`;
 
     const url = `https://wa.me/${waNumber}?text=${encodeURIComponent(fullMessage)}`;
     window.open(url, "_blank");
@@ -289,26 +444,115 @@ export default function RecetasPage() {
   }
 
   return (
-    <main className="space-y-4 p-6">
-      <header className="space-y-1">
-        <h1 className="text-2xl font-bold">Recetas</h1>
-        <p className="text-sm text-slate-600">
-          Recetas registradas hoy ({today}).
-        </p>
+    <main className="space-y-4 p-4 sm:p-6">
+      <header className="space-y-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div className="space-y-1">
+            <h1 className="text-2xl font-bold">Recetas</h1>
+            <p className="text-sm text-slate-600">
+              {activeSearchPatient
+                ? `Recetas de ${activeSearchPatient.fullName} (cualquier fecha)`
+                : `Recetas registradas para ${selectedDateISO}.`}
+            </p>
+          </div>
+
+          <div className="space-y-2 sm:space-y-1">
+            <div className="space-y-1">
+              <p className="text-xs font-semibold text-slate-700">Fecha</p>
+              <DatePicker
+                selected={selectedDate}
+                onChange={(d: Date | null) => {
+                  if (!d) return;
+                  if (activeSearchPatient) {
+                    setSearchError("Para usar la fecha, primero limpia la búsqueda.");
+                    return;
+                  }
+                  setSelectedDate(d);
+                }}
+                dateFormat="dd/MM/yyyy"
+                locale="es"
+                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-black"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <p className="text-xs font-semibold text-slate-700">
+                  Escribe un DNI (8 dígitos) o el nombre del paciente.
+              </p>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <input
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-black"
+                  placeholder="Ej: 12345678 o Juan"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                />
+                <button
+                  type="button"
+                  disabled={searchLoading}
+                  onClick={() => handleSearchRecipes()}
+                  className="rounded bg-amber-500 px-3 py-2 text-sm font-semibold text-black hover:bg-amber-600 disabled:opacity-60"
+                >
+                  {searchLoading ? "..." : "Buscar"}
+                </button>
+              </div>
+
+              {searchError && (
+                <p className="text-xs text-red-600">{searchError}</p>
+              )}
+
+              {(activeSearchPatient || showPatientCandidates) && (
+                <button
+                  type="button"
+                  onClick={handleClearSearch}
+                  className="text-xs font-semibold text-slate-600 hover:text-slate-900"
+                >
+                  Limpiar búsqueda
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
       </header>
 
       <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        {showPatientCandidates && (
+          <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <p className="text-xs font-semibold text-slate-700">
+              Se encontraron múltiples pacientes. Selecciona uno:
+            </p>
+            <div className="mt-2 max-h-48 overflow-y-auto space-y-2">
+              {patientCandidates.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={async () => {
+                    setActiveSearchPatient(p);
+                    setShowPatientCandidates(false);
+                    setSearchError(null);
+                    await loadRecipesForPatient(p.id);
+                  }}
+                  className="w-full rounded border border-slate-200 bg-white px-3 py-2 text-left text-xs hover:bg-slate-100"
+                >
+                  <div className="font-semibold text-slate-900">{p.fullName}</div>
+                  <div className="text-[11px] text-slate-600">DNI {p.dni}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         {loading ? (
           <p className="text-sm text-slate-500">Cargando recetas…</p>
         ) : error ? (
           <p className="text-sm text-red-600">{error}</p>
         ) : recipes.length === 0 ? (
           <p className="text-sm text-slate-500">
-            Aún no hay recetas registradas para hoy.
+            {activeSearchPatient
+              ? "Aún no hay recetas registradas para este paciente."
+              : `Aún no hay recetas registradas para ${selectedDateISO}.`}
           </p>
         ) : (
-          <div className="max-h-[520px] overflow-y-auto">
-            <table className="min-w-full border-collapse text-sm">
+          <div className="max-h-[520px] overflow-x-auto overflow-y-auto">
+            <table className="min-w-[720px] border-collapse text-sm">
               <thead>
                 <tr className="bg-slate-50">
                   <th className="border-b border-slate-200 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide">
@@ -344,13 +588,18 @@ export default function RecetasPage() {
                       {r.appointment?.type ?? "—"}
                     </td>
                     <td className="border-b border-slate-100 px-3 py-2 text-right text-slate-700">
-                      {new Date(r.createdAt).toLocaleTimeString("es-PE", {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
+                      {activeSearchPatient
+                        ? new Date(r.createdAt).toLocaleString("es-PE", {
+                            dateStyle: "medium",
+                            timeStyle: "short",
+                          })
+                        : new Date(r.createdAt).toLocaleTimeString("es-PE", {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
                     </td>
                     <td className="border-b border-slate-100 px-3 py-2 text-right">
-                      <div className="flex items-center justify-end gap-2">
+                      <div className="flex flex-wrap items-center justify-end gap-2">
                         <button
                           type="button"
                           onClick={() => handlePrintRecipe(r)}

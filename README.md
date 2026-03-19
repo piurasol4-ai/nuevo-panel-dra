@@ -29,8 +29,31 @@ To learn more about Next.js, take a look at the following resources:
 
 You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
 
-## Deploy on Vercel
+## Deploy en Railway
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Este proyecto ya está preparado para desplegarse en Railway.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+### 1) Crear proyecto y conectar repositorio
+- En Railway, crea un nuevo proyecto y conecta este repo.
+
+### 2) Provisionar PostgreSQL
+- Agrega un servicio PostgreSQL dentro del mismo proyecto.
+- Railway inyectará `DATABASE_URL` automáticamente (o configúrala manualmente si usas DB externa).
+
+### 3) Variables de entorno
+- Copia los valores desde `.env.example` y completa los reales:
+  - `DATABASE_URL`
+  - `JWT_SECRET`
+  - `APP_BASE_URL`
+  - `DECOLECTA_API_TOKEN` (si aplica)
+  - `SMTP_*` (si aplica)
+
+### 4) Build y arranque
+- Railway usa `railway.json`:
+  - build: `npm run build`
+  - start: `npm run start:railway`
+- En el arranque se ejecuta `prisma migrate deploy` antes de iniciar Next.js.
+
+### 5) Verificación
+- Abre la URL pública del deploy.
+- Verifica login, agenda, historias clínicas y facturación.
