@@ -4,6 +4,10 @@ import { useEffect, useMemo, useState } from "react";
 import type { Patient } from "@prisma/client";
 import { useSearchParams } from "next/navigation";
 
+// Evita el prerender estático en build (Railway/Next),
+// ya que esta página depende de estado del cliente y query params.
+export const dynamic = "force-dynamic";
+
 type ClinicalNote = {
   id: string;
   patientId: string;
