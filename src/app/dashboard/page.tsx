@@ -2,6 +2,10 @@ import { prisma } from "@/lib/prisma";
 import Link from "next/link";
 import RevenueSummary from "./revenue-summary";
 
+// Evita que Next prerenderice esta página durante `next build`,
+// porque aquí consultamos la BD con Prisma.
+export const dynamic = "force-dynamic";
+
 function getLimaMonthDay(d: Date): { month: number; day: number } {
   const parts = new Intl.DateTimeFormat("es-PE", {
     timeZone: "America/Lima",
