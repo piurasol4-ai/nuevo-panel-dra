@@ -12,6 +12,7 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith("/_next") ||
     pathname.startsWith("/favicon") ||
     pathname.startsWith("/api/auth") ||
+    pathname.startsWith("/api/db-probe") ||
     pathname.startsWith("/api/health") ||
     isPublicAsset
   ) {
