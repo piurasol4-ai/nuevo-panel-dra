@@ -4,8 +4,6 @@ import { useEffect, useState } from "react";
 
 type Row = { id: number; name: string; price: string };
 
-const PROCEDIMIENTOS_STORAGE_KEY = "hc_procedimientos_precios_v1";
-
 const DEFAULT_ROWS: Row[] = [
   { id: 1, name: "AUTOHEMOC MAYOR", price: "S/ 150.00" },
   { id: 2, name: "HIDROCOLON POR SESION", price: "S/ 200.00" },
@@ -49,42 +47,25 @@ const DEFAULT_ROWS: Row[] = [
 ];
 
 export default function PreciosPage() {
-  const [rows, setRows] = useState<Row[]>(() => {
-    if (typeof window === "undefined") return DEFAULT_ROWS;
-    try {
-      const raw = window.localStorage.getItem(PROCEDIMIENTOS_STORAGE_KEY);
-      if (!raw) return DEFAULT_ROWS;
-      const parsed: unknown = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return DEFAULT_ROWS;
-      const safe = parsed
-        .filter((x): x is Record<string, unknown> => !!x && typeof x === "object")
-        .map((x, idx) => ({
-          id: typeof x.id === "number" ? x.id : idx + 1,
-          name: String(x.name ?? ""),
-          price: String(x.price ?? "S/ 0.00"),
-        }))
-        .filter((x) => x.name.trim().length > 0);
-      return safe.length > 0 ? safe : DEFAULT_ROWS;
-    } catch {
-      return DEFAULT_ROWS;
-    }
-  });
-
-  const [nextId, setNextId] = useState(() =>
-    Math.max(...rows.map((r) => r.id), 0) + 1,
-  );
+  const [rows, setRows] = useState<Row[]>([]);
+  const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState<number | null>(null);
 
   useEffect(() => {
-    try {
-      window.localStorage.setItem(
-        PROCEDIMIENTOS_STORAGE_KEY,
-        JSON.stringify(rows),
-      );
-    } catch {
-      // ignore
-    }
-  }, [rows]);
+    Promise.resolve().then(async () => {
+      setLoading(true);
+      try {
+        const res = await fetch("/api/procedures");
+        const json = (await res.json()) as unknown;
+        const list = Array.isArray(json) ? (json as Row[]) : DEFAULT_ROWS;
+        setRows(list);
+      } catch {
+        setRows(DEFAULT_ROWS);
+      } finally {
+        setLoading(false);
+      }
+    });
+  }, []);
 
   function handleChange(id: number, field: "name" | "price", value: string) {
     setRows((prev) =>
@@ -102,15 +83,49 @@ export default function PreciosPage() {
   }
 
   function handleDelete(id: number) {
-    setRows((prev) => prev.filter((row) => row.id !== id));
+    fetch(`/api/procedures?id=${encodeURIComponent(id)}`, { method: "DELETE" })
+      .then(async (res) => {
+        if (!res.ok) {
+          const json = (await res.json().catch(() => null)) as
+            | { error?: string }
+            | null;
+          throw new Error(json?.error ?? "Error borrando procedimiento");
+        }
+        setRows((prev) => prev.filter((row) => row.id !== id));
+      })
+      .catch(() => alert("No se pudo borrar el procedimiento."));
   }
 
-  function handleAddRow() {
-    setRows((prev) => [
-      ...prev,
-      { id: nextId, name: "Nuevo procedimiento", price: "S/ 0.00" },
-    ]);
-    setNextId((x) => x + 1);
+  async function handleSave(row: Row) {
+    try {
+      const res = await fetch("/api/procedures", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: row.id, name: row.name, price: row.price }),
+      });
+      if (!res.ok) throw new Error("Error guardando procedimiento");
+      const updated = (await res.json()) as Row;
+      setRows((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
+      setEditingId(null);
+    } catch {
+      alert("No se pudo guardar el procedimiento.");
+    }
+  }
+
+  async function handleAddRow() {
+    try {
+      const res = await fetch("/api/procedures", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "Nuevo procedimiento", price: "S/ 0.00" }),
+      });
+      if (!res.ok) throw new Error("Error agregando procedimiento");
+      const created = (await res.json()) as Row;
+      setRows((prev) => [...prev, created]);
+      setEditingId(created.id);
+    } catch {
+      alert("No se pudo agregar el procedimiento.");
+    }
   }
 
   return (
@@ -126,7 +141,7 @@ export default function PreciosPage() {
         <div className="flex justify-end">
           <button
             type="button"
-            onClick={handleAddRow}
+            onClick={() => void handleAddRow()}
             className="rounded bg-amber-500 px-3 py-1.5 text-xs font-semibold text-black hover:bg-amber-600"
           >
             Agregar fila
@@ -148,7 +163,14 @@ export default function PreciosPage() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => (
+              {loading ? (
+                <tr>
+                  <td colSpan={3} className="py-6 text-center text-sm text-slate-500">
+                    Cargando precios...
+                  </td>
+                </tr>
+              ) : (
+                rows.map((row) => (
                 <tr key={row.id} className="hover:bg-slate-50">
                   <td className="border border-slate-200 px-3 py-1.5 text-[13px]">
                     {editingId === row.id ? (
@@ -179,7 +201,7 @@ export default function PreciosPage() {
                       <div className="flex flex-wrap justify-end gap-2">
                         <button
                           type="button"
-                          onClick={() => setEditingId(null)}
+                          onClick={() => void handleSave(row)}
                           className="rounded border border-slate-300 px-2 py-1 text-[11px] font-semibold text-slate-800 hover:bg-slate-100"
                         >
                           Guardar
@@ -212,7 +234,8 @@ export default function PreciosPage() {
                     )}
                   </td>
                 </tr>
-              ))}
+                ))
+              )}
             </tbody>
           </table>
         </div>

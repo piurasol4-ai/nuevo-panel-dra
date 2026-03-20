@@ -42,6 +42,7 @@ model Patient {
   appointments  Appointment[]
   clinicalNotes ClinicalNote[]
   recipes       Recipe[]
+  ticketRecords TicketRecord[]
 }
 
 model Appointment {
@@ -61,6 +62,7 @@ model Appointment {
   doctor        User           @relation("UserAppointments", fields: [doctorId], references: [id])
   clinicalNotes ClinicalNote[]
   recipes       Recipe[]
+  ticketRecord  TicketRecord?
 }
 
 model ClinicalNote {
@@ -116,4 +118,75 @@ model Recipe {
 
   patient     Patient      @relation(fields: [patientId], references: [id])
   appointment Appointment? @relation(fields: [appointmentId], references: [id])
+}
+
+// ---- Catálogos y ventas (en DB para evitar inconsistencias por localStorage) ----
+model ProcedurePrice {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  priceCents Int    // Precio unitario en céntimos (para evitar floats)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model ProductCatalog {
+  id         Int      @id @default(autoincrement())
+  name       String   @unique
+  category   String
+  use        String
+  stock      Int      @default(0)
+  unitPriceCents Int  // Precio unitario en céntimos
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  ticketLines TicketLine[]
+}
+
+model TicketRecord {
+  id        String   @id @default(cuid())
+  ticketNumber Int   @unique @default(autoincrement())
+  createdAt DateTime @default(now())
+
+  // Fecha en formato yyyy-mm-dd (para filtrar fácil por día en UI)
+  dateISO   String
+
+  appointmentId String? @unique
+  patientId String
+  patientName String
+  patientDni String
+
+  procedureName String
+  procedureUnitPriceCents Int
+
+  paymentEfectivoCents Int @default(0)
+  paymentYapeCents Int @default(0)
+  paymentPlinCents Int @default(0)
+  paymentTransferenciaCents Int @default(0)
+  paymentTotalCents Int @default(0)
+
+  totalCents Int
+
+  ticketLines TicketLine[]
+
+  // Opcionales para relacionar (por integridad; la UI no depende de esto)
+  patient Patient @relation(fields: [patientId], references: [id])
+  appointment Appointment? @relation(fields: [appointmentId], references: [id])
+}
+
+model TicketLine {
+  id Int @id @default(autoincrement())
+  ticketId String
+
+  // Si viene de un producto catálogo, productId es un Int; si es "extra", va null.
+  productId Int?
+
+  name String
+  quantity Int
+  unitPriceCents Int
+  lineTotalCents Int
+
+  ticket TicketRecord @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  product ProductCatalog? @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@index([ticketId])
 }

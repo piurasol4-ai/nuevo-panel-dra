@@ -17,6 +17,7 @@ type TicketStored = {
   patientName: string;
   patientDni: string;
   procedureName: string;
+  procedureUnitPriceSoles?: number;
   totalSoles: number;
   paymentEfectivoSoles?: number;
   paymentYapeSoles?: number;
@@ -30,10 +31,7 @@ type TicketStored = {
     quantity: number;
     lineTotalSoles: number;
   }>;
-  procedureUnitPriceSoles?: number;
 };
-
-const TICKETS_STORAGE_KEY = "hc_tickets_v1";
 
 function toLocalISODate(d: Date) {
   const year = d.getFullYear();
@@ -70,20 +68,79 @@ export default function FacturacionPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    Promise.resolve().then(() => {
+    Promise.resolve().then(async () => {
       setLoading(true);
       setError(null);
 
       try {
-        const raw = window.localStorage.getItem(TICKETS_STORAGE_KEY);
-        const parsed: unknown = raw ? JSON.parse(raw) : [];
-        const all = Array.isArray(parsed) ? (parsed as TicketStored[]) : [];
+        const res = await fetch(
+          `/api/tickets?dateISO=${encodeURIComponent(selectedDateISO)}`,
+        );
+        const json = (await res.json()) as {
+          ok?: boolean;
+          tickets?: unknown[];
+          error?: string;
+        };
 
-        const filtered = all
-          .filter((t) => t && t.dateISO === selectedDateISO)
-          .sort((a, b) => b.ticketNumber - a.ticketNumber);
+        if (!json.ok && json.error) {
+          throw new Error(json.error);
+        }
 
-        setTickets(filtered);
+        type TicketApiLike = {
+          id: unknown;
+          ticketNumber: unknown;
+          createdAt: unknown;
+          dateISO: unknown;
+          patientName: unknown;
+          patientDni: unknown;
+          procedureName: unknown;
+          procedureUnitPriceCents: unknown;
+          totalCents: unknown;
+          paymentEfectivoCents: unknown;
+          paymentYapeCents: unknown;
+          paymentPlinCents: unknown;
+          paymentTransferenciaCents: unknown;
+          paymentTotalCents: unknown;
+          ticketLines?: Array<{
+            id: unknown;
+            productId: unknown;
+            name: unknown;
+            quantity: unknown;
+            unitPriceCents: unknown;
+            lineTotalCents: unknown;
+          }>;
+        };
+
+        const list = Array.isArray(json.tickets) ? json.tickets : [];
+        const mapped: TicketStored[] = list.map((t) => {
+          const x = t as TicketApiLike;
+          return {
+            id: String(x.id),
+            ticketNumber: Number(x.ticketNumber),
+            createdAt: String(x.createdAt),
+            dateISO: String(x.dateISO),
+            patientName: String(x.patientName),
+            patientDni: String(x.patientDni),
+            procedureName: String(x.procedureName ?? ""),
+            procedureUnitPriceSoles: Number(x.procedureUnitPriceCents) / 100,
+            totalSoles: Number(x.totalCents) / 100,
+            paymentEfectivoSoles: Number(x.paymentEfectivoCents) / 100,
+            paymentYapeSoles: Number(x.paymentYapeCents) / 100,
+            paymentPlinSoles: Number(x.paymentPlinCents) / 100,
+            paymentTransferenciaSoles: Number(x.paymentTransferenciaCents) / 100,
+            paymentTotalSoles: Number(x.paymentTotalCents) / 100,
+            items: (Array.isArray(x.ticketLines) ? x.ticketLines : []).map((l) => ({
+              productId: typeof l.productId === "number" ? l.productId : -1,
+              name: String(l.name),
+              unitPriceSoles: Number(l.unitPriceCents) / 100,
+              quantity: Number(l.quantity),
+              lineTotalSoles: Number(l.lineTotalCents) / 100,
+            })),
+          };
+        });
+
+        mapped.sort((a, b) => b.ticketNumber - a.ticketNumber);
+        setTickets(mapped);
       } catch {
         setTickets([]);
         setError("No se pudieron cargar los tickets/boletas.");
@@ -104,17 +161,17 @@ export default function FacturacionPage() {
     );
     if (!ok) return;
 
-    try {
-      const raw = window.localStorage.getItem(TICKETS_STORAGE_KEY);
-      const parsed: unknown = raw ? JSON.parse(raw) : [];
-      const all = Array.isArray(parsed) ? (parsed as TicketStored[]) : [];
-      const next = all.filter((x) => x.id !== t.id);
-
-      window.localStorage.setItem(TICKETS_STORAGE_KEY, JSON.stringify(next));
-      setTickets((prev) => prev.filter((x) => x.id !== t.id));
-    } catch {
-      alert("No se pudo eliminar el Ticket/Boleta.");
-    }
+    fetch(`/api/tickets?id=${encodeURIComponent(t.id)}`, { method: "DELETE" })
+      .then(async (res) => {
+        if (!res.ok) {
+          const json = (await res.json().catch(() => null)) as
+            | { error?: string }
+            | null;
+          throw new Error(json?.error ?? "No se pudo eliminar el Ticket/Boleta.");
+        }
+      })
+      .then(() => setTickets((prev) => prev.filter((x) => x.id !== t.id)))
+      .catch(() => alert("No se pudo eliminar el Ticket/Boleta."));
   }
 
   function buildTicketPrintHtml(params: {

@@ -15,8 +15,6 @@ type TicketStored = {
   paymentTotalSoles?: number;
 };
 
-const TICKETS_STORAGE_KEY = "hc_tickets_v1";
-
 function toLocalISODate(d: Date) {
   const year = d.getFullYear();
   const month = String(d.getMonth() + 1).padStart(2, "0");
@@ -60,12 +58,59 @@ export default function RevenueSummary() {
   const [tickets, setTickets] = useState<TicketStored[]>([]);
 
   useEffect(() => {
-    Promise.resolve().then(() => {
+    Promise.resolve().then(async () => {
+      const now = new Date();
+      const { startISO: weekStartISO, endISO: weekEndISO } = getWeekRangeISO(now);
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+      const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+      const monthStartISO = toLocalISODate(monthStart);
+      const monthEndISO = toLocalISODate(monthEnd);
+
+      // Traer un rango que cubra semana + mes para calcular todo en el cliente.
+      const rangeStartISO = weekStartISO < monthStartISO ? weekStartISO : monthStartISO;
+      const rangeEndISO = weekEndISO > monthEndISO ? weekEndISO : monthEndISO;
+
       try {
-        const raw = window.localStorage.getItem(TICKETS_STORAGE_KEY);
-        const parsed: unknown = raw ? JSON.parse(raw) : [];
-        const all = Array.isArray(parsed) ? (parsed as TicketStored[]) : [];
-        setTickets(all);
+        const res = await fetch(
+          `/api/tickets?startISO=${encodeURIComponent(rangeStartISO)}&endISO=${encodeURIComponent(rangeEndISO)}`,
+        );
+        const json = (await res.json()) as {
+          ok?: boolean;
+          tickets?: unknown[];
+          error?: string;
+        };
+        const list = Array.isArray(json.tickets) ? json.tickets : [];
+
+        type TicketApiLike = {
+          id: unknown;
+          ticketNumber: unknown;
+          createdAt: unknown;
+          dateISO: unknown;
+          totalCents: unknown;
+          paymentEfectivoCents: unknown;
+          paymentYapeCents: unknown;
+          paymentPlinCents: unknown;
+          paymentTransferenciaCents: unknown;
+          paymentTotalCents: unknown;
+        };
+
+        setTickets(
+          list.map((t) => {
+            const x = t as TicketApiLike;
+            return {
+              id: String(x.id),
+              ticketNumber: Number(x.ticketNumber),
+              createdAt: String(x.createdAt),
+              dateISO: String(x.dateISO),
+              totalSoles: Number(x.totalCents) / 100,
+              paymentEfectivoSoles: Number(x.paymentEfectivoCents) / 100,
+              paymentYapeSoles: Number(x.paymentYapeCents) / 100,
+              paymentPlinSoles: Number(x.paymentPlinCents) / 100,
+              paymentTransferenciaSoles: Number(x.paymentTransferenciaCents) / 100,
+              paymentTotalSoles: Number(x.paymentTotalCents) / 100,
+            };
+          }),
+        );
       } catch {
         setTickets([]);
       }

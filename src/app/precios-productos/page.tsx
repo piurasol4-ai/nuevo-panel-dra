@@ -12,8 +12,6 @@ type ProductRow = {
   price: string;
 };
 
-const PRODUCTS_STORAGE_KEY = "hc_productos_v1";
-
 export default function PreciosProductosPage() {
   type ImportMode = "replace" | "merge";
   const DEFAULT_ROWS: ProductRow[] = [
@@ -139,63 +137,34 @@ export default function PreciosProductosPage() {
     },
   ];
 
-  const [rows, setRows] = useState<ProductRow[]>(() => {
-    if (typeof window === "undefined") return DEFAULT_ROWS;
-    try {
-      const raw = window.localStorage.getItem(PRODUCTS_STORAGE_KEY);
-      if (!raw) return DEFAULT_ROWS;
-      const parsed: unknown = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return DEFAULT_ROWS;
-
-      const safe = parsed
-        .filter((x): x is Record<string, unknown> => !!x && typeof x === "object")
-        .map((x, idx) => ({
-          id: typeof x.id === "number" ? x.id : idx + 1,
-          name: String(x.name ?? ""),
-          category: String(x.category ?? ""),
-          use: String(x.use ?? ""),
-          stock: String(x.stock ?? "0"),
-          price: String(x.price ?? "S/ 0.00"),
-        }))
-        .filter((x) => x.name.trim().length > 0);
-
-      return safe.length > 0 ? safe : DEFAULT_ROWS;
-    } catch {
-      return DEFAULT_ROWS;
-    }
-  });
-
-  const [nextId, setNextId] = useState<number>(() => {
-    if (typeof window === "undefined") return DEFAULT_ROWS.length + 1;
-    try {
-      const raw = window.localStorage.getItem(PRODUCTS_STORAGE_KEY);
-      if (!raw) return DEFAULT_ROWS.length + 1;
-      const parsed: unknown = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return DEFAULT_ROWS.length + 1;
-      const maxId = parsed.reduce((acc: number, x: unknown) => {
-        if (!x || typeof x !== "object") return acc;
-        const maybeId = (x as Record<string, unknown>).id;
-        return typeof maybeId === "number" ? Math.max(acc, maybeId) : acc;
-      }, 0);
-      return maxId + 1;
-    } catch {
-      return DEFAULT_ROWS.length + 1;
-    }
-  });
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(
-        PRODUCTS_STORAGE_KEY,
-        JSON.stringify(rows),
-      );
-    } catch {
-      // ignore
-    }
-  }, [rows]);
+  const [rows, setRows] = useState<ProductRow[]>([]);
+  const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [excelMessage, setExcelMessage] = useState<string | null>(null);
   const [importMode, setImportMode] = useState<ImportMode>("replace");
+
+  useEffect(() => {
+    Promise.resolve().then(async () => {
+      setLoading(true);
+      try {
+        const res = await fetch("/api/products");
+        const json = (await res.json()) as unknown;
+        const list = Array.isArray(json) ? (json as ProductRow[]) : DEFAULT_ROWS;
+        setRows(list);
+      } catch {
+        setRows(DEFAULT_ROWS);
+      } finally {
+        setLoading(false);
+      }
+    });
+  }, []);
+
+  async function refreshRows() {
+    const res = await fetch("/api/products");
+    const json = (await res.json()) as unknown;
+    const list = Array.isArray(json) ? (json as ProductRow[]) : DEFAULT_ROWS;
+    setRows(list);
+  }
 
   function handleChange(
     id: number,
@@ -223,22 +192,63 @@ export default function PreciosProductosPage() {
   }
 
   function handleDelete(id: number) {
-    setRows((prev) => prev.filter((row) => row.id !== id));
+    fetch(`/api/products?id=${encodeURIComponent(id)}`, { method: "DELETE" })
+      .then(async (res) => {
+        if (!res.ok) {
+          const json = (await res.json().catch(() => null)) as
+            | { error?: string }
+            | null;
+          throw new Error(json?.error ?? "Error borrando");
+        }
+        setRows((prev) => prev.filter((row) => row.id !== id));
+      })
+      .catch(() => alert("No se pudo borrar el producto."));
   }
 
-  function handleAddRow() {
-    setRows((prev) => [
-      ...prev,
-      {
-        id: nextId,
-        name: "Nuevo producto",
-        category: "",
-        use: "",
-        stock: "0",
-        price: "S/ 0.00",
-      },
-    ]);
-    setNextId((x) => x + 1);
+  async function handleAddRow() {
+    try {
+      const res = await fetch("/api/products", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Nuevo producto",
+          category: "",
+          use: "",
+          stock: "0",
+          price: "S/ 0.00",
+        }),
+      });
+      if (!res.ok) throw new Error("Error agregando producto");
+      const created = (await res.json()) as ProductRow;
+      setRows((prev) => [...prev, created]);
+      setEditingId(created.id);
+    } catch {
+      alert("No se pudo agregar el producto.");
+      await refreshRows().catch(() => null);
+    }
+  }
+
+  async function handleSave(row: ProductRow) {
+    try {
+      const res = await fetch("/api/products", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: row.id,
+          name: row.name,
+          category: row.category,
+          use: row.use,
+          stock: row.stock,
+          price: row.price,
+        }),
+      });
+      if (!res.ok) throw new Error("Error guardando producto");
+      const updated = (await res.json()) as ProductRow;
+      setRows((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
+      setEditingId(null);
+    } catch {
+      alert("No se pudo guardar el producto.");
+    }
   }
 
   function formatPrice(value: unknown) {
@@ -358,56 +368,36 @@ export default function PreciosProductosPage() {
         );
         return;
       }
+      const payloadProducts = importedRows.map((r) => ({
+        name: r.name,
+        category: r.category,
+        use: r.use,
+        stock: r.stock,
+        price: r.price,
+      }));
 
-      if (importMode === "replace") {
-        setRows(importedRows);
-        setNextId(importedRows.length + 1);
-        setExcelMessage(
-          `Se importaron ${importedRows.length} productos desde Excel (reemplazo total).`,
-        );
-        return;
+      const res = await fetch("/api/products/bulk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: importMode, products: payloadProducts }),
+      });
+
+      if (!res.ok) {
+        const json = (await res.json().catch(() => null)) as
+          | { error?: string }
+          | null;
+        throw new Error(json?.error ?? "No se pudo importar el Excel.");
       }
 
-      const key = (v: string) => v.trim().toLowerCase();
-      const existingByName = new Map(rows.map((r) => [key(r.name), r] as const));
-      const mergedRows = [...rows];
-      let updatedCount = 0;
-      let insertedCount = 0;
-      let maxId = rows.reduce((acc, r) => Math.max(acc, r.id), 0);
+      const json = (await res.json()) as unknown;
+      const list = Array.isArray(json) ? (json as ProductRow[]) : [];
 
-      for (const incoming of importedRows) {
-        const k = key(incoming.name);
-        const existing = existingByName.get(k);
-        if (existing) {
-          const idx = mergedRows.findIndex((r) => r.id === existing.id);
-          if (idx >= 0) {
-            mergedRows[idx] = {
-              ...mergedRows[idx],
-              category: incoming.category,
-              use: incoming.use,
-              stock: incoming.stock,
-              price: incoming.price,
-            };
-            updatedCount += 1;
-          }
-          continue;
-        }
+      if (list.length) setRows(list);
+      else await refreshRows().catch(() => null);
 
-        maxId += 1;
-        const toInsert: ProductRow = {
-          ...incoming,
-          id: maxId,
-        };
-        mergedRows.push(toInsert);
-        existingByName.set(k, toInsert);
-        insertedCount += 1;
-      }
-
-      setRows(mergedRows);
-      setNextId(maxId + 1);
       setEditingId(null);
       setExcelMessage(
-        `Importación combinada: ${updatedCount} actualizados, ${insertedCount} nuevos.`,
+        `Se importaron ${importedRows.length} productos desde Excel (${importMode === "replace" ? "reemplazo total" : "combinación"}).`,
       );
     } catch {
       setExcelMessage("No se pudo importar el archivo Excel.");
@@ -457,7 +447,7 @@ export default function PreciosProductosPage() {
           </button>
           <button
             type="button"
-            onClick={handleAddRow}
+            onClick={() => void handleAddRow()}
             className="rounded bg-amber-500 px-3 py-1.5 text-xs font-semibold text-black hover:bg-amber-600"
           >
             Agregar producto
@@ -491,8 +481,15 @@ export default function PreciosProductosPage() {
               </tr>
             </thead>
             <tbody>
-              {rows.slice(0, 15).map((row) => (
-                <tr key={row.id} className="hover:bg-slate-50">
+              {loading ? (
+                <tr>
+                  <td colSpan={6} className="py-6 text-center text-sm text-slate-500">
+                    Cargando productos...
+                  </td>
+                </tr>
+              ) : (
+                rows.slice(0, 15).map((row) => (
+                  <tr key={row.id} className="hover:bg-slate-50">
                   <td className="border border-slate-200 px-3 py-1.5 text-[13px]">
                     {editingId === row.id ? (
                       <input
@@ -563,7 +560,7 @@ export default function PreciosProductosPage() {
                       <div className="flex flex-wrap justify-end gap-2">
                         <button
                           type="button"
-                          onClick={() => setEditingId(null)}
+                          onClick={() => void handleSave(row)}
                           className="rounded border border-slate-300 px-2 py-1 text-[11px] font-semibold text-slate-800 hover:bg-slate-100"
                         >
                           Guardar
@@ -595,8 +592,9 @@ export default function PreciosProductosPage() {
                       </div>
                     )}
                   </td>
-                </tr>
-              ))}
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>

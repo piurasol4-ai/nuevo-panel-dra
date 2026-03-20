@@ -16,11 +16,13 @@ export async function hashPassword(password: string) {
 }
 
 export async function verifyPassword(password: string, hashOrPlain: string) {
-  // Compat: si en BD quedó una contraseña plana antigua, permitimos comparar directo
-  if (!hashOrPlain.startsWith("$2a$") && !hashOrPlain.startsWith("$2b$")) {
-    return password === hashOrPlain;
+  // Compat: si en BD quedó una contraseña plana antigua, permitimos comparar directo.
+  // bcryptjs puede generar hashes con prefijos $2a$, $2b$ o $2y$, etc.
+  // Si empieza con "$2", asumimos que es hash bcrypt.
+  if (hashOrPlain.startsWith("$2")) {
+    return await bcrypt.compare(password, hashOrPlain);
   }
-  return await bcrypt.compare(password, hashOrPlain);
+  return password === hashOrPlain;
 }
 
 export async function signSession(user: AuthUser) {

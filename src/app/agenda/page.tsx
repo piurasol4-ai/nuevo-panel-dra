@@ -91,7 +91,6 @@ function AgendaPageInner() {
     return () => window.clearInterval(i);
   }, []);
 
-  const PROCEDIMIENTOS_STORAGE_KEY = "hc_procedimientos_precios_v1";
   const DEFAULT_PROCEDURES: { name: string; price: string }[] = [
     // Dejamos CONSULTA MEDICA como primera opción para agilizar la inscripción
     { name: "CONSULTA MEDICA", price: "S/ 150.00" },
@@ -118,9 +117,6 @@ function AgendaPageInner() {
     { name: "DISCOLISIS", price: "S/ 8,000.00" },
     { name: "HIDROTERAPIA DE COLON", price: "S/ 300.00" },
   ];
-
-  const PRODUCTS_STORAGE_KEY = "hc_productos_v1";
-  const TICKETS_STORAGE_KEY = "hc_tickets_v1";
 
   function toLocalISODate(d: Date) {
     const year = d.getFullYear();
@@ -286,19 +282,11 @@ function AgendaPageInner() {
     loadProceduresFromStorage();
   }, [patientIdFromQuery]);
 
-  function loadProceduresFromStorage() {
+  async function loadProceduresFromStorage() {
     try {
-      const raw = window.localStorage.getItem(PROCEDIMIENTOS_STORAGE_KEY);
-      const parsed: unknown = raw ? JSON.parse(raw) : [];
-      let fromLista = Array.isArray(parsed)
-        ? parsed
-            .filter((x): x is Record<string, unknown> => !!x && typeof x === "object")
-            .map((x) => ({
-              name: String(x.name ?? "").trim(),
-              price: String(x.price ?? "").trim(),
-            }))
-            .filter((x) => x.name.length > 0)
-        : [];
+      const res = await fetch("/api/procedures");
+      const json = (await res.json()) as unknown;
+      let fromLista = Array.isArray(json) ? (json as Array<{ name: string; price: string }>) : [];
 
       // Aseguramos que "CONSULTA MEDICA" aparezca primero si existe
       const idxConsulta = fromLista.findIndex(
@@ -319,61 +307,6 @@ function AgendaPageInner() {
     } catch {
       setProcedures(DEFAULT_PROCEDURES);
       setProceduresSource("respaldo");
-    }
-  }
-
-  function readProceduresFromStorageImmediate() {
-    try {
-      const raw = window.localStorage.getItem(PROCEDIMIENTOS_STORAGE_KEY);
-      const parsed: unknown = raw ? JSON.parse(raw) : [];
-      const fromLista = Array.isArray(parsed)
-        ? parsed
-            .filter(
-              (x): x is Record<string, unknown> =>
-                !!x && typeof x === "object",
-            )
-            .map((x) => ({
-              name: String(x.name ?? "").trim(),
-              price: String(x.price ?? "").trim(),
-            }))
-            .filter((x) => x.name.length > 0)
-        : [];
-
-      return fromLista.length > 0 ? fromLista : DEFAULT_PROCEDURES;
-    } catch {
-      return DEFAULT_PROCEDURES;
-    }
-  }
-
-  function readProductsFromStorageImmediate() {
-    try {
-      const raw = window.localStorage.getItem(PRODUCTS_STORAGE_KEY);
-      const parsed: unknown = raw ? JSON.parse(raw) : [];
-      const fromLista = Array.isArray(parsed)
-        ? parsed
-            .filter(
-              (x): x is Record<string, unknown> =>
-                !!x && typeof x === "object",
-            )
-            .map((x, idx) => {
-              const id =
-                typeof x.id === "number"
-                  ? x.id
-                  : typeof x.id === "string"
-                    ? Number(x.id)
-                    : idx + 1;
-              return {
-                productId: id,
-                name: String(x.name ?? "").trim(),
-                unitPriceSoles: parseSolesToNumber(String(x.price ?? "")) ?? 0,
-              };
-            })
-            .filter((x) => x.name.length > 0 && Number.isFinite(x.productId))
-        : [];
-
-      return fromLista;
-    } catch {
-      return [];
     }
   }
 
@@ -876,7 +809,7 @@ function AgendaPageInner() {
     setAttentionPrescription("");
   }
 
-  function openTicketForAppointment(a: AppointmentWithPatient) {
+  async function openTicketForAppointment(a: AppointmentWithPatient) {
     setTicketError(null);
     setTicketSaving(false);
 
@@ -887,12 +820,12 @@ function AgendaPageInner() {
     const procName = a.type || "CONSULTA MEDICA";
     setTicketProcedureName(procName);
 
-    const procs = readProceduresFromStorageImmediate();
-    const proc = procs.find(
+    const proc = procedures.find(
       (p) => p.name.toLowerCase() === String(procName).toLowerCase(),
     );
     const unitPrice = proc ? parseSolesToNumber(proc.price) ?? 0 : 0;
     setTicketProcedureUnitPriceSoles(unitPrice);
+
     // Por defecto, colocamos el total del procedimiento en Efectivo.
     setTicketPagoEfectivoSoles(unitPrice);
     setTicketPagoYapeSoles(0);
@@ -900,45 +833,97 @@ function AgendaPageInner() {
     setTicketPagoTransferenciaSoles(0);
     setTicketPagosManual(false);
 
-    const prods = readProductsFromStorageImmediate();
-    setProductCatalog(prods);
+    // Cargar catálogo de productos (para poder agregarlos al ticket)
+    let mappedProds: Array<{ productId: number; name: string; unitPriceSoles: number }> =
+      [];
+    try {
+      const res = await fetch("/api/products");
+      const json = (await res.json()) as unknown;
+      type ProductApiLike = { id: unknown; name: unknown; price: unknown };
+      const list = Array.isArray(json) ? (json as ProductApiLike[]) : [];
+      mappedProds = list
+        .map((p) => ({
+          productId: Number(p.id),
+          name: String(p.name ?? ""),
+          unitPriceSoles: parseSolesToNumber(String(p.price ?? "")) ?? 0,
+        }))
+        .filter((x) => x.name && Number.isFinite(x.productId));
+      setProductCatalog(mappedProds);
+    } catch {
+      setProductCatalog([]);
+    }
+
     setTicketItems([]);
     setTicketProductIdToAdd("");
     setTicketProductQtyToAdd("1");
 
     // Si ya existe un ticket guardado para esta cita, lo cargamos en el modal.
     try {
-      const raw = window.localStorage.getItem(TICKETS_STORAGE_KEY);
-      const parsed: unknown = raw ? JSON.parse(raw) : [];
-      const existing = Array.isArray(parsed) ? (parsed as TicketStored[]) : [];
-      const saved = existing.find((t) => t.appointmentId === a.id);
+      const res = await fetch(
+        `/api/tickets?appointmentId=${encodeURIComponent(a.id)}`,
+      );
+      type TicketLineApiLike = {
+        productId: unknown;
+        name: unknown;
+        unitPriceCents: unknown;
+        quantity: unknown;
+      };
+      type TicketApiLike = {
+        id: unknown;
+        procedureName: unknown;
+        procedureUnitPriceCents: unknown;
+        paymentEfectivoCents: unknown;
+        paymentYapeCents: unknown;
+        paymentPlinCents: unknown;
+        paymentTransferenciaCents: unknown;
+        ticketLines?: TicketLineApiLike[];
+      };
+
+      const json = (await res.json()) as {
+        tickets?: unknown[];
+        ok?: boolean;
+      };
+      const saved = Array.isArray(json.tickets)
+        ? (json.tickets[0] as TicketApiLike | undefined)
+        : undefined;
 
       if (saved) {
-        setTicketProcedureName(saved.procedureName ?? procName);
-        setTicketProcedureUnitPriceSoles(saved.procedureUnitPriceSoles);
-        setTicketPagoEfectivoSoles(saved.paymentEfectivoSoles ?? 0);
-        setTicketPagoYapeSoles(saved.paymentYapeSoles ?? 0);
-        setTicketPagoPlinSoles(saved.paymentPlinSoles ?? 0);
-        setTicketPagoTransferenciaSoles(saved.paymentTransferenciaSoles ?? 0);
+        setTicketProcedureName(String(saved.procedureName ?? procName));
+        setTicketProcedureUnitPriceSoles(
+          Number(saved.procedureUnitPriceCents) / 100,
+        );
+        setTicketPagoEfectivoSoles(
+          Number(saved.paymentEfectivoCents) / 100,
+        );
+        setTicketPagoYapeSoles(Number(saved.paymentYapeCents) / 100);
+        setTicketPagoPlinSoles(Number(saved.paymentPlinCents) / 100);
+        setTicketPagoTransferenciaSoles(
+          Number(saved.paymentTransferenciaCents) / 100,
+        );
         setTicketPagosManual(true);
+
+        const lines = Array.isArray(saved.ticketLines)
+          ? saved.ticketLines
+          : [];
         setTicketItems(
-          (saved.items ?? []).map((it, idx) => ({
-            lineId: `saved_${saved.id}_${it.productId}_${idx}`,
-            productId: it.productId,
-            name: it.name,
-            unitPriceSoles: it.unitPriceSoles,
-            quantity: it.quantity,
+          lines.map((l, idx) => ({
+            lineId: `saved_${String(saved.id)}_${idx}`,
+            productId: l.productId == null ? -1 * (idx + 1) : Number(l.productId),
+            name: String(l.name ?? ""),
+            unitPriceSoles: Number(l.unitPriceCents) / 100,
+            quantity: Number(l.quantity),
           })),
         );
       }
     } catch {
       // Si falla la lectura, dejamos el modal en blanco.
     }
+
     setTicketExtraDetailToAdd("");
     setTicketExtraUnitPriceToAdd(0);
     setTicketExtraQtyToAdd(1);
 
-    if (prods.length === 0) {
+    if (mappedProds.length === 0) {
       setTicketError(
         "No hay productos en la Lista de productos. Abre 'Lista de productos' y guarda para que aparezcan aquí.",
       );
@@ -1022,7 +1007,7 @@ function AgendaPageInner() {
     setTicketExtraQtyToAdd(1);
   }
 
-  function handleSaveTicket() {
+  async function handleSaveTicket() {
     if (!ticketAppointment) return;
 
     setTicketSaving(true);
@@ -1052,32 +1037,7 @@ function AgendaPageInner() {
     }
 
     try {
-      const raw = window.localStorage.getItem(TICKETS_STORAGE_KEY);
-      const parsed: unknown = raw ? JSON.parse(raw) : [];
-      const existing = Array.isArray(parsed) ? (parsed as TicketStored[]) : [];
-
-      // Regla: no permitir 2 Ticket/Boleta para la misma cita.
-      const alreadyForAppointment = existing.find(
-        (t) => t.appointmentId === ticketAppointment.id,
-      );
-      if (alreadyForAppointment) {
-        setTicketError(
-          `Ya existe un Ticket/Boleta para esta cita (N.º ${alreadyForAppointment.ticketNumber}).`,
-        );
-        setTicketSaving(false);
-        return;
-      }
-
-      const maxTicketNumber = existing.reduce((acc, t) => {
-        const n = typeof t.ticketNumber === "number" ? t.ticketNumber : null;
-        return n != null ? Math.max(acc, n) : acc;
-      }, 339);
-
-      const ticketNumber = maxTicketNumber + 1;
-      const id =
-        typeof crypto !== "undefined" && "randomUUID" in crypto
-          ? crypto.randomUUID()
-          : `ticket_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+      // Persistencia y decremento de stock se hacen en DB vía POST /api/tickets.
 
       const ticketProductsTotal = items.reduce(
         (acc, x) => acc + x.lineTotalSoles,
@@ -1125,95 +1085,119 @@ function AgendaPageInner() {
         return;
       }
 
-      // Disminuir stock en la Lista de productos (hc_productos_v1)
-      // Solo para productos del catálogo (productId > 0). Los extras usan productId negativo.
-      const catalogLines = items.filter((x) => x.productId > 0 && x.quantity > 0);
-      if (catalogLines.length > 0) {
-        const rawProducts = window.localStorage.getItem(PRODUCTS_STORAGE_KEY);
-        const parsedProducts: unknown = rawProducts ? JSON.parse(rawProducts) : [];
-        const productsArray = Array.isArray(parsedProducts)
-          ? parsedProducts
-          : [];
+      // Guardar en DB (stock y unicidad por appointmentId se validan en el backend)
+      try {
+        type TicketLineApiLike = {
+          id?: unknown;
+          productId: unknown;
+          name: unknown;
+          quantity: unknown;
+          unitPriceCents: unknown;
+          lineTotalCents: unknown;
+        };
+        type TicketApiLike = {
+          id: unknown;
+          ticketNumber: unknown;
+          createdAt: unknown;
+          dateISO: unknown;
+          appointmentId: unknown;
+          patientId: unknown;
+          patientName: unknown;
+          patientDni: unknown;
+          procedureName: unknown;
+          procedureUnitPriceCents: unknown;
+          paymentEfectivoCents: unknown;
+          paymentYapeCents: unknown;
+          paymentPlinCents: unknown;
+          paymentTransferenciaCents: unknown;
+          paymentTotalCents: unknown;
+          totalCents: unknown;
+          ticketLines?: TicketLineApiLike[];
+        };
 
-        const stocksById = new Map<number, number>();
-        const indexById = new Map<number, number>();
+        const payloadItems = items.map((x) => ({
+          productId: x.productId > 0 ? x.productId : null,
+          name: x.name,
+          quantity: x.quantity,
+          unitPriceSoles: x.unitPriceSoles,
+        }));
 
-        productsArray.forEach((p, idx) => {
-          const anyP = p as Record<string, unknown>;
-          const id =
-            typeof anyP.id === "number"
-              ? anyP.id
-              : typeof anyP.id === "string"
-                ? Number(anyP.id)
-                : idx + 1;
-
-          if (!Number.isFinite(id)) return;
-
-          const stockRaw = String(anyP.stock ?? "0").replace(/[^\d]/g, "");
-          const stockNum = Number(stockRaw);
-          stocksById.set(Number(id), Number.isFinite(stockNum) ? stockNum : 0);
-          indexById.set(Number(id), idx);
+        const res = await fetch("/api/tickets", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            appointmentId: ticketAppointment.id,
+            procedureUnitPriceSoles: procedurePrice,
+            paymentEfectivoSoles: pagosEfectivo,
+            paymentYapeSoles: pagosYape,
+            paymentPlinSoles: pagosPlin,
+            paymentTransferenciaSoles: pagosTransferencia,
+            items: payloadItems,
+          }),
         });
 
-        // Validación + cálculo en memoria
-        for (const line of catalogLines) {
-          const currentStock = stocksById.get(line.productId) ?? 0;
-          if (currentStock < line.quantity) {
-            setTicketError(
-              `Stock insuficiente para "${line.name}". Disponible: ${currentStock}, requerido: ${line.quantity}.`,
-            );
-            setTicketSaving(false);
-            return;
-          }
-          stocksById.set(line.productId, currentStock - line.quantity);
+        const json = (await res.json().catch(() => null)) as
+          | { error?: string; ticket?: TicketApiLike }
+          | null;
+
+        if (!res.ok || !json?.ticket) {
+          throw new Error(json?.error ?? "No se pudo guardar el Ticket/Boleta.");
         }
 
-        // Persistir stocks actualizados
-        const updatedProducts = productsArray.map((p) => p);
-        for (const [productId, newStock] of stocksById.entries()) {
-          const idx = indexById.get(productId);
-          if (idx == null) continue;
-          const anyP = updatedProducts[idx] as Record<string, unknown>;
-          anyP.stock = String(newStock);
-        }
+        const created = json.ticket;
 
-        window.localStorage.setItem(
-          PRODUCTS_STORAGE_KEY,
-          JSON.stringify(updatedProducts),
-        );
+        const ticketToPrint: TicketStored = {
+          id: String(created.id),
+          ticketNumber: Number(created.ticketNumber),
+          createdAt: String(created.createdAt),
+          dateISO: String(created.dateISO),
+          appointmentId: String(created.appointmentId ?? ticketAppointment.id),
+          patientId: String(created.patientId ?? ticketAppointment.patientId),
+          patientName: String(created.patientName),
+          patientDni: String(created.patientDni),
+          procedureName: String(created.procedureName ?? ticketProcedureName),
+          procedureUnitPriceSoles: Number(created.procedureUnitPriceCents) / 100,
+          paymentEfectivoSoles: Number(created.paymentEfectivoCents) / 100,
+          paymentYapeSoles: Number(created.paymentYapeCents) / 100,
+          paymentPlinSoles: Number(created.paymentPlinCents) / 100,
+          paymentTransferenciaSoles:
+            Number(created.paymentTransferenciaCents) / 100,
+          paymentTotalSoles: Number(created.paymentTotalCents) / 100,
+          items: Array.isArray(created.ticketLines)
+            ? created.ticketLines.map((l, idx) => ({
+                productId: l.productId == null ? -(idx + 1) : Number(l.productId),
+                name: String(l.name),
+                unitPriceSoles: Number(l.unitPriceCents) / 100,
+                quantity: Number(l.quantity),
+                lineTotalSoles: Number(l.lineTotalCents) / 100,
+              }))
+            : items.map((x) => ({
+                productId: x.productId,
+                name: x.name,
+                unitPriceSoles: x.unitPriceSoles,
+                quantity: x.quantity,
+                lineTotalSoles: x.lineTotalSoles,
+              })),
+          totalSoles: Number(created.totalCents) / 100,
+        };
+
+        // Guardado listo: imprimimos y cerramos modal
+        handlePrintTicket(ticketToPrint);
+        setShowTicketModal(false);
+        setTicketAppointment(null);
+        setTicketItems([]);
+        setTicketError(null);
+        return;
+      } catch (err) {
+        const msg =
+          err instanceof Error ? err.message : "No se pudo guardar el Ticket/Boleta.";
+        setTicketError(msg);
+        setTicketSaving(false);
+        return;
       }
 
-      const stored: TicketStored = {
-        id,
-        ticketNumber,
-        createdAt: new Date().toISOString(),
-        dateISO: ticketDateISO,
-        appointmentId: ticketAppointment.id,
-        patientId: ticketAppointment.patientId,
-        patientName: ticketAppointment.patient.fullName,
-        patientDni: String(ticketAppointment.patient.dni ?? ""),
-        procedureName: ticketProcedureName,
-        procedureUnitPriceSoles: procedurePrice,
-        paymentEfectivoSoles: pagosEfectivo,
-        paymentYapeSoles: pagosYape,
-        paymentPlinSoles: pagosPlin,
-        paymentTransferenciaSoles: pagosTransferencia,
-        paymentTotalSoles: pagosSum,
-        items,
-        totalSoles,
-      };
-
-      window.localStorage.setItem(
-        TICKETS_STORAGE_KEY,
-        JSON.stringify([...existing, stored]),
-      );
-
-      // Guardamos y al mismo tiempo imprimimos el ticket/boleta guardado.
-      handlePrintTicket();
-
-      setShowTicketModal(false);
-      setTicketAppointment(null);
-      setTicketItems([]);
+      // Nota: la persistencia y el descuento de stock se hacen en DB mediante
+      // POST /api/tickets. No se utiliza localStorage.
     } catch {
       setTicketError("No se pudo guardar el Ticket/Boleta.");
     } finally {
@@ -1335,9 +1319,7 @@ function AgendaPageInner() {
 </html>`;
   }
 
-  function handlePrintTicket() {
-    if (!ticketAppointment) return;
-
+  function handlePrintTicket(ticketToPrint: TicketStored) {
     if (typeof window === "undefined") return;
 
     const logoUrl = new URL("/logo-harmonia.png", window.location.origin).href;
@@ -1351,98 +1333,28 @@ function AgendaPageInner() {
       timeStyle: "short",
     });
 
+    const html = buildTicketPrintHtml({
+      ticket: ticketToPrint,
+      logoUrl,
+      fechaCreacion,
+      fechaImpresion,
+    });
+
+    const win = window.open("", "_blank");
+    if (!win) return;
     try {
-      const raw = window.localStorage.getItem(TICKETS_STORAGE_KEY);
-      const parsed: unknown = raw ? JSON.parse(raw) : [];
-      const existing = Array.isArray(parsed) ? (parsed as TicketStored[]) : [];
-
-      // Regla: si ya existe ticket para esta cita, imprimimos el guardado.
-      const alreadyForAppointment = existing.find(
-        (t) => t.appointmentId === ticketAppointment.id,
-      );
-
-      const ticketToPrint: TicketStored | null = alreadyForAppointment
-        ? alreadyForAppointment
-        : (() => {
-            const procedurePrice = Number(ticketProcedureUnitPriceSoles);
-            const items = ticketItems
-              .filter((x) => x.quantity > 0)
-              .map((x) => ({
-                productId: x.productId,
-                name: x.name,
-                unitPriceSoles: x.unitPriceSoles,
-                quantity: x.quantity,
-                lineTotalSoles: x.unitPriceSoles * x.quantity,
-              }));
-
-      const maxTicketNumber = existing.reduce((acc, t) => {
-              const n = typeof t.ticketNumber === "number" ? t.ticketNumber : null;
-              return n != null ? Math.max(acc, n) : acc;
-      }, 339);
-
-            const ticketNumber = maxTicketNumber + 1;
-            const totalSoles = procedurePrice + items.reduce((acc, it) => acc + it.lineTotalSoles, 0);
-            const paymentEfectivoSoles = ticketPagoEfectivoSoles;
-            const paymentYapeSoles = ticketPagoYapeSoles;
-            const paymentPlinSoles = ticketPagoPlinSoles;
-            const paymentTransferenciaSoles = ticketPagoTransferenciaSoles;
-            const paymentTotalSoles =
-              paymentEfectivoSoles +
-              paymentYapeSoles +
-              paymentPlinSoles +
-              paymentTransferenciaSoles;
-
-            return {
-              id: `draft_${Date.now()}`,
-              ticketNumber,
-              createdAt: now.toISOString(),
-              dateISO: ticketDateISO,
-              appointmentId: ticketAppointment.id,
-              patientId: ticketAppointment.patientId,
-              patientName: ticketAppointment.patient.fullName,
-              patientDni: String(ticketAppointment.patient.dni ?? ""),
-              procedureName: ticketProcedureName,
-              procedureUnitPriceSoles: procedurePrice,
-              paymentEfectivoSoles,
-              paymentYapeSoles,
-              paymentPlinSoles,
-              paymentTransferenciaSoles,
-              paymentTotalSoles,
-              items,
-              totalSoles,
-            };
-          })();
-
-      if (!ticketToPrint) {
-        setTicketError("No se pudo imprimir el Ticket/Boleta.");
-        return;
-      }
-
-      const html = buildTicketPrintHtml({
-        ticket: ticketToPrint,
-        logoUrl,
-        fechaCreacion,
-        fechaImpresion,
-      });
-
-      const win = window.open("", "_blank");
-      if (!win) return;
-      try {
-        win.opener = null;
-      } catch {
-        // ignore
-      }
-
-      win.document.open();
-      win.document.write(html);
-      win.document.close();
-      win.focus();
-      setTimeout(() => {
-        win.print();
-      }, 300);
+      win.opener = null;
     } catch {
-      setTicketError("No se pudo imprimir el Ticket/Boleta.");
+      // ignore
     }
+
+    win.document.open();
+    win.document.write(html);
+    win.document.close();
+    win.focus();
+    setTimeout(() => {
+      win.print();
+    }, 300);
   }
 
   async function handleSaveRecipe(e: React.FormEvent) {
@@ -1718,7 +1630,7 @@ function AgendaPageInner() {
                       </button>
                       <button
                         type="button"
-                        onClick={() => openTicketForAppointment(a)}
+                        onClick={() => void openTicketForAppointment(a)}
                         className="rounded border border-sky-200 bg-sky-50 px-2 py-0.5 text-[10px] font-semibold text-sky-900 hover:bg-sky-100"
                       >
                         Ticket/Boleta
