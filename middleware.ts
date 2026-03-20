@@ -6,6 +6,7 @@ const PUBLIC_PATHS = new Set(["/login"]);
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const isPublicAsset = /\.[a-zA-Z0-9]+$/.test(pathname);
+  const isLoginPath = pathname === "/login" || pathname === "/login/";
 
   if (
     pathname.startsWith("/_next") ||
@@ -17,7 +18,7 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  if (PUBLIC_PATHS.has(pathname)) {
+  if (PUBLIC_PATHS.has(pathname) || isLoginPath) {
     return NextResponse.next();
   }
 
