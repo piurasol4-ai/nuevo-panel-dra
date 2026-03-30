@@ -167,6 +167,23 @@ export async function POST(request: NextRequest) {
 
   const dateISO = toLimaISODate(new Date(appt.startAt));
 
+  // Idempotencia: por esquema `TicketRecord.appointmentId` es único.
+  // Si el frontend envía dos veces (doble click / reintento), no volvemos
+  // a crear el ticket ni volvemos a descontar stock.
+  const existingTicket = await prisma.ticketRecord.findUnique({
+    where: { appointmentId },
+    include: { ticketLines: true },
+  });
+  if (existingTicket) {
+    return NextResponse.json(
+      {
+        ok: true,
+        ticket: existingTicket,
+      },
+      { status: 200 },
+    );
+  }
+
   return await prisma.$transaction(async (tx) => {
     // Validar y descontar stock (solo productos catálogo)
     for (const line of ticketLines) {
@@ -224,7 +241,31 @@ export async function POST(request: NextRequest) {
       { status: 201 },
     );
   }).catch((err) => {
-    const message = err instanceof Error ? err.message : "No se pudo crear ticket";
+    // Si ocurre una carrera (dos requests simultáneas), podemos terminar con
+    // P2002 aunque la validación previa haya pasado. En ese caso, devolvemos
+    // el ticket existente en vez de fallar.
+    const maybeCode =
+      err && typeof err === "object" && "code" in err
+        ? String((err as { code?: unknown }).code ?? "")
+        : "";
+    if (maybeCode === "P2002") {
+      return prisma.ticketRecord
+        .findUnique({
+          where: { appointmentId },
+          include: { ticketLines: true },
+        })
+        .then((t) => {
+          if (t) {
+            return NextResponse.json({ ok: true, ticket: t }, { status: 200 });
+          }
+          const message =
+            err instanceof Error ? err.message : "Violación de unicidad.";
+          return NextResponse.json({ error: message }, { status: 400 });
+        });
+    }
+
+    const message =
+      err instanceof Error ? err.message : "No se pudo crear ticket";
     return NextResponse.json({ error: message }, { status: 400 });
   });
 }

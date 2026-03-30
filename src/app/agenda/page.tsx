@@ -66,6 +66,9 @@ function AgendaPageInner() {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [patientId, setPatientId] = useState("");
+  const [patientQuery, setPatientQuery] = useState("");
+  const [patientInputFocused, setPatientInputFocused] = useState(false);
+  const [patientHighlightIndex, setPatientHighlightIndex] = useState<number>(-1);
   const [procedure, setProcedure] = useState("");
   const [startTime, setStartTime] = useState("09:00");
   const [endTime, setEndTime] = useState("09:30");
@@ -281,6 +284,13 @@ function AgendaPageInner() {
     setFormError(null);
     loadProceduresFromStorage();
   }, [patientIdFromQuery]);
+
+  useEffect(() => {
+    if (!patientId) return;
+    const selected = patients.find((p) => p.id === patientId);
+    if (!selected) return;
+    setPatientQuery(`${selected.fullName} · DNI ${selected.dni}`);
+  }, [patientId, patients]);
 
   async function loadProceduresFromStorage() {
     try {
@@ -656,10 +666,31 @@ function AgendaPageInner() {
     setEditingId(null);
     setShowForm(false);
     setPatientId("");
+    setPatientQuery("");
     setProcedure("");
     setStartTime("09:00");
     setEndTime("09:30");
     setReason("");
+  }
+
+  const filteredPatients = useMemo(() => {
+    const q = patientQuery.trim().toLowerCase();
+    if (!q) return patients;
+    return patients.filter(
+      (p) =>
+        p.fullName.toLowerCase().includes(q) || p.dni.toLowerCase().includes(q),
+    );
+  }, [patients, patientQuery]);
+  const visibleFilteredPatients = useMemo(
+    () => filteredPatients.slice(0, 60),
+    [filteredPatients],
+  );
+
+  function pickPatient(p: Patient) {
+    setPatientId(p.id);
+    setPatientQuery(`${p.fullName} · DNI ${p.dni}`);
+    setPatientInputFocused(false);
+    setPatientHighlightIndex(-1);
   }
 
   async function handleDeleteAppointment(id: string) {
@@ -741,6 +772,8 @@ function AgendaPageInner() {
   );
   const [ticketExtraQtyToAdd, setTicketExtraQtyToAdd] = useState<number>(1);
   const [ticketItems, setTicketItems] = useState<TicketProductLine[]>([]);
+  const [existingTicketForAppointment, setExistingTicketForAppointment] =
+    useState<TicketStored | null>(null);
 
   const [ticketSaving, setTicketSaving] = useState(false);
   const [ticketError, setTicketError] = useState<string | null>(null);
@@ -812,6 +845,7 @@ function AgendaPageInner() {
   async function openTicketForAppointment(a: AppointmentWithPatient) {
     setTicketError(null);
     setTicketSaving(false);
+    setExistingTicketForAppointment(null);
 
     const dateISO = toLocalISODate(new Date(a.startAt));
     setTicketAppointment(a);
@@ -870,12 +904,21 @@ function AgendaPageInner() {
       };
       type TicketApiLike = {
         id: unknown;
+        ticketNumber: unknown;
+        createdAt: unknown;
+        dateISO: unknown;
+        appointmentId: unknown;
+        patientId: unknown;
+        patientName: unknown;
+        patientDni: unknown;
         procedureName: unknown;
         procedureUnitPriceCents: unknown;
         paymentEfectivoCents: unknown;
         paymentYapeCents: unknown;
         paymentPlinCents: unknown;
         paymentTransferenciaCents: unknown;
+        paymentTotalCents: unknown;
+        totalCents: unknown;
         ticketLines?: TicketLineApiLike[];
       };
 
@@ -888,6 +931,37 @@ function AgendaPageInner() {
         : undefined;
 
       if (saved) {
+        const mappedExisting: TicketStored = {
+          id: String(saved.id),
+          ticketNumber: Number(saved.ticketNumber),
+          createdAt: String(saved.createdAt),
+          dateISO: String(saved.dateISO),
+          appointmentId: String(saved.appointmentId ?? a.id),
+          patientId: String(saved.patientId ?? a.patientId),
+          patientName: String(saved.patientName ?? a.patient.fullName),
+          patientDni: String(saved.patientDni ?? a.patient.dni),
+          procedureName: String(saved.procedureName ?? procName),
+          procedureUnitPriceSoles: Number(saved.procedureUnitPriceCents) / 100,
+          paymentEfectivoSoles: Number(saved.paymentEfectivoCents) / 100,
+          paymentYapeSoles: Number(saved.paymentYapeCents) / 100,
+          paymentPlinSoles: Number(saved.paymentPlinCents) / 100,
+          paymentTransferenciaSoles:
+            Number(saved.paymentTransferenciaCents) / 100,
+          paymentTotalSoles: Number(saved.paymentTotalCents) / 100,
+          items: (Array.isArray(saved.ticketLines) ? saved.ticketLines : []).map(
+            (l, idx) => ({
+              productId: l.productId == null ? -(idx + 1) : Number(l.productId),
+              name: String(l.name ?? ""),
+              unitPriceSoles: Number(l.unitPriceCents) / 100,
+              quantity: Number(l.quantity),
+              lineTotalSoles:
+                (Number(l.unitPriceCents) / 100) * Number(l.quantity),
+            }),
+          ),
+          totalSoles: Number(saved.totalCents) / 100,
+        };
+        setExistingTicketForAppointment(mappedExisting);
+
         setTicketProcedureName(String(saved.procedureName ?? procName));
         setTicketProcedureUnitPriceSoles(
           Number(saved.procedureUnitPriceCents) / 100,
@@ -1508,6 +1582,7 @@ function AgendaPageInner() {
   );
 
   const ticketFaltaPagoSoles = ticketTotalSoles - ticketPagosSumaSoles;
+  const ticketReadOnly = Boolean(existingTicketForAppointment);
 
   // Si el usuario no editó manualmente los pagos, ajustamos Efectivo al nuevo total
   // cuando cambian los productos/servicios.
@@ -1533,6 +1608,7 @@ function AgendaPageInner() {
           onClick={() => {
             loadProceduresFromStorage();
             setShowForm(true);
+            setPatientQuery("");
             setAppointmentFormDate(selectedDate);
           }}
           className="rounded bg-amber-500 px-4 py-2 text-sm font-semibold text-black shadow hover:bg-amber-600"
@@ -1727,18 +1803,91 @@ function AgendaPageInner() {
               </div>
               <div className="space-y-1 text-sm">
                 <label className="block text-xs text-slate-600">Paciente</label>
-                <select
-                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
-                  value={patientId}
-                  onChange={(e) => setPatientId(e.target.value)}
-                >
-                  <option value="">Selecciona un paciente…</option>
-                  {patients.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.fullName} · DNI {p.dni}
-                    </option>
-                  ))}
-                </select>
+                <div className="relative">
+                  <input
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                    placeholder="Buscar por nombre o DNI…"
+                    value={patientQuery}
+                    onChange={(e) => {
+                      setPatientQuery(e.target.value);
+                      setPatientId("");
+                      setPatientHighlightIndex(-1);
+                    }}
+                    onFocus={() => {
+                      setPatientInputFocused(true);
+                      setPatientHighlightIndex(-1);
+                    }}
+                    onKeyDown={(e) => {
+                      const options = visibleFilteredPatients;
+                      if (e.key === "ArrowDown") {
+                        e.preventDefault();
+                        if (!patientInputFocused) setPatientInputFocused(true);
+                        if (options.length > 0) {
+                          setPatientHighlightIndex((prev) =>
+                            prev < options.length - 1 ? prev + 1 : 0,
+                          );
+                        }
+                        return;
+                      }
+                      if (e.key === "ArrowUp") {
+                        e.preventDefault();
+                        if (options.length > 0) {
+                          setPatientHighlightIndex((prev) =>
+                            prev > 0 ? prev - 1 : options.length - 1,
+                          );
+                        }
+                        return;
+                      }
+                      if (e.key === "Enter") {
+                        if (patientInputFocused && options.length > 0) {
+                          e.preventDefault();
+                          const idx =
+                            patientHighlightIndex >= 0 ? patientHighlightIndex : 0;
+                          pickPatient(options[idx]);
+                        }
+                        return;
+                      }
+                      if (e.key === "Escape") {
+                        setPatientInputFocused(false);
+                        setPatientHighlightIndex(-1);
+                      }
+                    }}
+                    onBlur={() => {
+                      setTimeout(() => setPatientInputFocused(false), 150);
+                    }}
+                  />
+                  {patientInputFocused && visibleFilteredPatients.length > 0 && (
+                    <ul className="absolute left-0 right-0 z-20 mt-1 max-h-52 overflow-y-auto rounded-lg border border-slate-300 bg-white text-xs shadow">
+                      {visibleFilteredPatients.map((p, idx) => (
+                        <li
+                          key={p.id}
+                          className={
+                            "cursor-pointer px-3 py-1.5 " +
+                            (idx === patientHighlightIndex
+                              ? "bg-slate-100"
+                              : "hover:bg-slate-100")
+                          }
+                          onMouseEnter={() => setPatientHighlightIndex(idx)}
+                          onMouseDown={() => {
+                            pickPatient(p);
+                          }}
+                        >
+                          <span className="font-semibold text-slate-900">
+                            {p.fullName}
+                          </span>
+                          <span className="ml-1 text-slate-600">
+                            · DNI {p.dni}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+                {!patientId && (
+                  <p className="text-[11px] text-slate-500">
+                    Selecciona un paciente de la lista para continuar.
+                  </p>
+                )}
               </div>
               <div className="space-y-1 text-sm">
                 <label className="block text-xs text-slate-600">
@@ -1821,6 +1970,7 @@ function AgendaPageInner() {
                     setShowForm(false);
                     setEditingId(null);
                     setFormError(null);
+                    setPatientQuery("");
                   }}
                 >
                   Cancelar
@@ -2187,6 +2337,12 @@ function AgendaPageInner() {
                 </div>
               </div>
 
+              {ticketReadOnly && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                  Esta cita ya tiene Ticket/Boleta guardado. Modo solo lectura.
+                </div>
+              )}
+
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-2 space-y-3">
                 <div className="flex items-center justify-between gap-3">
                   <div>
@@ -2194,13 +2350,14 @@ function AgendaPageInner() {
                       Precio del procedimiento
                     </p>
                     <p className="text-[11px] text-slate-500">
-                      (editable)
+                      {ticketReadOnly ? "(solo lectura)" : "(editable)"}
                     </p>
                   </div>
                   <input
                     type="number"
                     step="0.01"
                     min="0"
+                    disabled={ticketReadOnly}
                     className="w-32 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
                     value={Number.isFinite(ticketProcedureUnitPriceSoles) ? ticketProcedureUnitPriceSoles : 0}
                     onChange={(e) => {
@@ -2225,6 +2382,7 @@ function AgendaPageInner() {
                   <div className="grid gap-2 md:grid-cols-[1fr,110px,120px]">
                     <select
                       value={ticketProductIdToAdd}
+                      disabled={ticketReadOnly}
                       onChange={(e) => {
                         const v = e.target.value;
                         setTicketProductIdToAdd(v ? Number(v) : "");
@@ -2243,6 +2401,7 @@ function AgendaPageInner() {
                       type="number"
                       min="1"
                       step="1"
+                      disabled={ticketReadOnly}
                       value={ticketProductQtyToAdd}
                       onChange={(e) => {
                         const normalized = e.target.value
@@ -2255,8 +2414,9 @@ function AgendaPageInner() {
 
                     <button
                       type="button"
+                      disabled={ticketReadOnly}
                       onClick={handleAddTicketProduct}
-                      className="rounded bg-sky-500 px-3 py-2 text-sm font-semibold text-white hover:bg-sky-600"
+                      className="rounded bg-sky-500 px-3 py-2 text-sm font-semibold text-white hover:bg-sky-600 disabled:opacity-50"
                     >
                       Agregar
                     </button>
@@ -2270,6 +2430,7 @@ function AgendaPageInner() {
                   <div className="grid gap-2 md:grid-cols-2">
                     <input
                       type="text"
+                      disabled={ticketReadOnly}
                       value={ticketExtraDetailToAdd}
                       onChange={(e) => setTicketExtraDetailToAdd(e.target.value)}
                       placeholder="Ej: Curación / insumo / detalle..."
@@ -2283,6 +2444,7 @@ function AgendaPageInner() {
                         type="number"
                         min="0"
                         step="0.01"
+                        disabled={ticketReadOnly}
                         value={
                           ticketExtraUnitPriceToAdd > 0
                             ? ticketExtraUnitPriceToAdd
@@ -2310,6 +2472,7 @@ function AgendaPageInner() {
                         type="number"
                         min="1"
                         step="1"
+                        disabled={ticketReadOnly}
                         value={ticketExtraQtyToAdd}
                         onChange={(e) => {
                           const v = Number(e.target.value);
@@ -2320,8 +2483,9 @@ function AgendaPageInner() {
                     </div>
                     <button
                       type="button"
+                      disabled={ticketReadOnly}
                       onClick={handleAddExtraProductLine}
-                      className="rounded bg-emerald-500 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-600"
+                      className="rounded bg-emerald-500 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-600 disabled:opacity-50"
                     >
                       Agregar extra
                     </button>
@@ -2346,9 +2510,11 @@ function AgendaPageInner() {
                             <th className="px-2 py-2 text-right text-xs font-semibold uppercase tracking-wide text-slate-700">
                               Total
                             </th>
-                            <th className="px-2 py-2 text-right text-xs font-semibold uppercase tracking-wide text-slate-700">
-                              Acc.
-                            </th>
+                            {!ticketReadOnly && (
+                              <th className="px-2 py-2 text-right text-xs font-semibold uppercase tracking-wide text-slate-700">
+                                Acc.
+                              </th>
+                            )}
                           </tr>
                         </thead>
                         <tbody>
@@ -2372,19 +2538,21 @@ function AgendaPageInner() {
                                   line.unitPriceSoles * line.quantity,
                                 )}
                               </td>
-                              <td className="px-2 py-2 text-right">
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    setTicketItems((prev) =>
-                                      prev.filter((x) => x.lineId !== line.lineId),
-                                    )
-                                  }
-                                  className="rounded border border-red-200 bg-red-50 px-2 py-1 text-[10px] font-semibold text-red-700 hover:bg-red-100"
-                                >
-                                  Quitar
-                                </button>
-                              </td>
+                              {!ticketReadOnly && (
+                                <td className="px-2 py-2 text-right">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setTicketItems((prev) =>
+                                        prev.filter((x) => x.lineId !== line.lineId),
+                                      )
+                                    }
+                                    className="rounded border border-red-200 bg-red-50 px-2 py-1 text-[10px] font-semibold text-red-700 hover:bg-red-100"
+                                  >
+                                    Quitar
+                                  </button>
+                                </td>
+                              )}
                             </tr>
                           ))}
                         </tbody>
@@ -2420,6 +2588,7 @@ function AgendaPageInner() {
                       type="number"
                       min="0"
                       step="0.01"
+                      disabled={ticketReadOnly}
                       value={
                         ticketPagoEfectivoSoles > 0
                           ? ticketPagoEfectivoSoles
@@ -2445,6 +2614,7 @@ function AgendaPageInner() {
                       type="number"
                       min="0"
                       step="0.01"
+                      disabled={ticketReadOnly}
                       value={
                         ticketPagoYapeSoles > 0 ? ticketPagoYapeSoles : ""
                       }
@@ -2468,6 +2638,7 @@ function AgendaPageInner() {
                       type="number"
                       min="0"
                       step="0.01"
+                      disabled={ticketReadOnly}
                       value={
                         ticketPagoPlinSoles > 0 ? ticketPagoPlinSoles : ""
                       }
@@ -2491,6 +2662,7 @@ function AgendaPageInner() {
                       type="number"
                       min="0"
                       step="0.01"
+                      disabled={ticketReadOnly}
                       value={
                         ticketPagoTransferenciaSoles > 0
                           ? ticketPagoTransferenciaSoles
@@ -2549,10 +2721,16 @@ function AgendaPageInner() {
                 <button
                   type="button"
                   disabled={ticketSaving}
-                  onClick={handleSaveTicket}
+                  onClick={() => {
+                    if (existingTicketForAppointment) {
+                      handlePrintTicket(existingTicketForAppointment);
+                      return;
+                    }
+                    void handleSaveTicket();
+                  }}
                   className="rounded bg-sky-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-sky-600 disabled:opacity-60"
                 >
-                  Guardar / Imprimir
+                  {existingTicketForAppointment ? "Imprimir" : "Guardar / Imprimir"}
                 </button>
               </div>
             </div>

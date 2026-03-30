@@ -1,6 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import crypto from "crypto";
+import { deleteDriveFile } from "@/lib/google-drive";
+
+export type ClinicalAttachment = {
+  id: string;
+  driveFileId: string;
+  name: string;
+  mimeType: string;
+  webViewLink: string | null;
+  uploadedAt: string;
+};
 
 type Visit = {
   id: string;
@@ -27,6 +37,8 @@ type Visit = {
   heartRate: string | null;
   respiratoryRate: string | null;
   glucose: string | null;
+  /** Archivos en Google Drive (solo metadatos en BD) */
+  attachments?: ClinicalAttachment[];
 };
 
 type ClinicalVisitDTO = {
@@ -56,6 +68,7 @@ type ClinicalVisitDTO = {
   heartRate: string | null;
   respiratoryRate: string | null;
   glucose: string | null;
+  attachments: ClinicalAttachment[];
 };
 
 type VisitBodyInput = {
@@ -82,7 +95,34 @@ type VisitBodyInput = {
   heartRate?: string | null;
   respiratoryRate?: string | null;
   glucose?: string | null;
+  attachments?: unknown;
 };
+
+function isClinicalAttachment(x: unknown): x is ClinicalAttachment {
+  if (!x || typeof x !== "object") return false;
+  const o = x as Record<string, unknown>;
+  return (
+    typeof o.id === "string" &&
+    typeof o.driveFileId === "string" &&
+    typeof o.name === "string" &&
+    typeof o.mimeType === "string" &&
+    (o.webViewLink === null || typeof o.webViewLink === "string") &&
+    typeof o.uploadedAt === "string"
+  );
+}
+
+function normalizeAttachments(input: unknown): ClinicalAttachment[] {
+  if (!Array.isArray(input)) return [];
+  return input.filter(isClinicalAttachment);
+}
+
+async function deleteDriveFileSafe(fileId: string) {
+  try {
+    await deleteDriveFile(fileId);
+  } catch (e) {
+    console.error("deleteDriveFileSafe:", fileId, e);
+  }
+}
 
 function isVisitArray(value: unknown): value is Visit[] {
   if (!Array.isArray(value)) return false;
@@ -117,6 +157,7 @@ function toVisitDTO(patientId: string, historyNumber: number, v: Visit) {
     heartRate: v.heartRate,
     respiratoryRate: v.respiratoryRate,
     glucose: v.glucose,
+    attachments: normalizeAttachments(v.attachments),
   } satisfies ClinicalVisitDTO;
 }
 
@@ -194,6 +235,7 @@ async function loadHistoryAndVisits(patientId: string) {
     heartRate: r.heartRate ?? null,
     respiratoryRate: r.respiratoryRate ?? null,
     glucose: r.glucose ?? null,
+    attachments: [],
   }));
 
   // Persistimos en el contenedor (historia) para que exista “gregario” en una sola fila.
@@ -256,8 +298,12 @@ export async function POST(request: NextRequest) {
       visitDate,
       ...(mapBodyToVisitFields({ ...body, visitDate }) as Omit<
         Visit,
-        "id" | "createdAt" | "visitDate"
+        "id" | "createdAt" | "visitDate" | "attachments"
       >),
+      attachments:
+        "attachments" in body && body.attachments !== undefined
+          ? normalizeAttachments(body.attachments)
+          : [],
     };
 
     const updatedVisits = [newVisit, ...visits];
@@ -357,6 +403,12 @@ export async function DELETE(request: NextRequest) {
 
   try {
     const { history, visits } = await loadHistoryAndVisits(patientId);
+    const removed = visits.find((v) => v.id === visitId);
+    if (removed) {
+      for (const a of normalizeAttachments(removed.attachments)) {
+        void deleteDriveFileSafe(a.driveFileId);
+      }
+    }
     const updatedVisits = visits.filter((v) => v.id !== visitId);
 
     await prisma.clinicalNote.update({

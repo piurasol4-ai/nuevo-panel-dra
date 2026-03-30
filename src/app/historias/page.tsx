@@ -1,12 +1,21 @@
  "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import type { Patient } from "@prisma/client";
 import { useSearchParams } from "next/navigation";
 
 // Evita el prerender estático en build (Railway/Next),
 // ya que esta página depende de estado del cliente y query params.
 export const dynamic = "force-dynamic";
+
+type ClinicalAttachment = {
+  id: string;
+  driveFileId: string;
+  name: string;
+  mimeType: string;
+  webViewLink: string | null;
+  uploadedAt: string;
+};
 
 type ClinicalNote = {
   id: string;
@@ -37,6 +46,7 @@ type ClinicalNote = {
   heartRate: string | null;
   respiratoryRate: string | null;
   glucose: string | null;
+  attachments?: ClinicalAttachment[];
 };
 
 type PatientExtras = Patient & {
@@ -268,6 +278,20 @@ function buildHistoriaClinicaHtml(
     <h2>Evolución / notas de progreso</h2>
     <div class="section-box block">${escapeHtml(note.evolutionNotes ?? "")}</div>
 
+    ${
+      note.attachments && note.attachments.length > 0
+        ? `<h2>Archivos adjuntos (Google Drive)</h2><div class="section-box"><ul style="margin:0;padding-left:18px;">${note.attachments
+            .map((a) => {
+              const label = escapeHtml(a.name);
+              if (a.webViewLink) {
+                return `<li><a href="${escapeHtml(a.webViewLink)}" target="_blank" rel="noopener noreferrer">${label}</a></li>`;
+              }
+              return `<li>${label}</li>`;
+            })
+            .join("")}</ul></div>`
+        : ""
+    }
+
     <div class="footer">
       <div class="sign">
         <div class="line"></div>
@@ -314,6 +338,10 @@ function HistoriasClinicasPageInner() {
   const [historySortOrder, setHistorySortOrder] = useState<"desc" | "asc">(
     "desc",
   );
+  const [attachments, setAttachments] = useState<ClinicalAttachment[]>([]);
+  const [uploadingAttachment, setUploadingAttachment] = useState(false);
+  /** Subidas a Drive aún no guardadas en la ficha (para borrar en Drive si se quitan antes de guardar). */
+  const pendingDriveIdsRef = useRef<Set<string>>(new Set());
 
   const selectedPatient = useMemo(
     () => patients.find((p) => p.id === selectedPatientId) || null,
@@ -390,6 +418,8 @@ function HistoriasClinicasPageInner() {
     if (!selectedPatientId) {
       setNotes([]);
       setEditingNoteId(null);
+      setAttachments([]);
+      pendingDriveIdsRef.current.clear();
       setConsultationReason("");
       setCurrentIllness("");
       setPhysicalExam("");
@@ -441,6 +471,8 @@ function HistoriasClinicasPageInner() {
         if (ordered && ordered.length > 0) {
           const n = ordered[0];
           setEditingNoteId(n.id);
+          setAttachments(n.attachments ?? []);
+          pendingDriveIdsRef.current.clear();
           setConsultationReason(n.consultationReason ?? "");
           setCurrentIllness(n.currentIllness ?? "");
           setPhysicalExam(n.physicalExam ?? "");
@@ -460,6 +492,8 @@ function HistoriasClinicasPageInner() {
           setVisitDate(n.visitDate ?? toLocalISODate(new Date(n.createdAt)));
         } else {
           setEditingNoteId(null);
+          setAttachments([]);
+          pendingDriveIdsRef.current.clear();
           setConsultationReason("");
           setCurrentIllness("");
           setPhysicalExam("");
@@ -489,6 +523,64 @@ function HistoriasClinicasPageInner() {
       })
       .finally(() => setLoadingNotes(false));
   }, [selectedPatientId]);
+
+  async function handleRemoveAttachment(att: ClinicalAttachment) {
+    setAttachments((prev) => prev.filter((a) => a.id !== att.id));
+    if (pendingDriveIdsRef.current.has(att.driveFileId)) {
+      pendingDriveIdsRef.current.delete(att.driveFileId);
+      try {
+        await fetch(
+          `/api/clinical-notes/attachments?driveFileId=${encodeURIComponent(
+            att.driveFileId,
+          )}`,
+          { method: "DELETE" },
+        );
+      } catch (e) {
+        console.error(e);
+      }
+    }
+  }
+
+  async function handleAttachmentFileChange(
+    e: React.ChangeEvent<HTMLInputElement>,
+  ) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || !selectedPatientId || !editingNoteId) return;
+
+    setUploadingAttachment(true);
+    setError(null);
+    try {
+      const fd = new FormData();
+      fd.set("patientId", selectedPatientId);
+      fd.set("visitId", editingNoteId);
+      fd.set("file", file);
+      const res = await fetch("/api/clinical-notes/attachments/upload", {
+        method: "POST",
+        body: fd,
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(
+          (data as { error?: string })?.error ||
+            "No se pudo subir el archivo.",
+        );
+        return;
+      }
+      const att = (data as { attachment?: ClinicalAttachment }).attachment;
+      if (!att) {
+        setError("Respuesta inválida al subir el archivo.");
+        return;
+      }
+      pendingDriveIdsRef.current.add(att.driveFileId);
+      setAttachments((prev) => [...prev, att]);
+    } catch (err) {
+      console.error(err);
+      setError("No se pudo subir el archivo.");
+    } finally {
+      setUploadingAttachment(false);
+    }
+  }
 
   async function handleDeleteNote(id: string) {
     if (!window.confirm("¿Deseas eliminar esta historia clínica?")) return;
@@ -600,6 +692,7 @@ function HistoriasClinicasPageInner() {
           heartRate,
           respiratoryRate,
           glucose,
+          attachments,
         }),
       });
       const txt = await res.text();
@@ -656,6 +749,8 @@ function HistoriasClinicasPageInner() {
       setVisitDate(
         saved.visitDate ?? toLocalISODate(new Date(saved.createdAt)),
       );
+      setAttachments(saved.attachments ?? []);
+      pendingDriveIdsRef.current.clear();
     } catch (err) {
       console.error(err);
       setError("No se pudo guardar la historia clínica.");
@@ -903,12 +998,85 @@ function HistoriasClinicasPageInner() {
                   placeholder="Cambios en la condición, respuesta al tratamiento…"
                 />
               </div>
+
+              <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50/80 p-3">
+                <label className="text-xs font-semibold text-slate-700">
+                  Archivos adjuntos (Google Drive)
+                </label>
+                <p className="text-[11px] text-slate-500">
+                  PDF o imagen (máx. 15 MB). El archivo se sube a tu carpeta de
+                  Drive; aquí solo guardamos el enlace.
+                </p>
+                {!editingNoteId ? (
+                  <p className="text-xs text-amber-800">
+                    Guarda la ficha primero para poder adjuntar archivos (o
+                    selecciona una atención existente).
+                  </p>
+                ) : (
+                  <>
+                    <input
+                      type="file"
+                      accept="application/pdf,image/jpeg,image/png,image/gif,image/webp"
+                      disabled={uploadingAttachment || saving}
+                      onChange={handleAttachmentFileChange}
+                      className="block w-full text-xs file:mr-2 file:rounded file:border-0 file:bg-amber-100 file:px-2 file:py-1 file:text-[11px] file:font-semibold"
+                    />
+                    {uploadingAttachment && (
+                      <p className="text-[11px] text-slate-500">
+                        Subiendo a Drive…
+                      </p>
+                    )}
+                    {attachments.length > 0 && (
+                      <ul className="space-y-1">
+                        {attachments.map((a) => (
+                          <li
+                            key={a.id}
+                            className="flex flex-wrap items-center justify-between gap-2 rounded border border-slate-200 bg-white px-2 py-1 text-[11px]"
+                          >
+                            <span className="font-medium text-slate-800">
+                              {a.name}
+                            </span>
+                            <span className="flex items-center gap-2">
+                              {a.webViewLink ? (
+                                <a
+                                  href={a.webViewLink}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-amber-700 underline"
+                                >
+                                  Abrir en Drive
+                                </a>
+                              ) : (
+                                <span className="text-slate-400">
+                                  (sin enlace)
+                                </span>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  void handleRemoveAttachment(a);
+                                }}
+                                className="rounded border border-red-200 bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold text-red-700 hover:bg-red-100"
+                              >
+                                Quitar
+                              </button>
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </>
+                )}
+              </div>
+
               <div className="flex justify-end gap-2 pt-1">
                 {editingNoteId && (
                   <button
                     type="button"
                     onClick={() => {
                       setEditingNoteId(null);
+                      setAttachments([]);
+                      pendingDriveIdsRef.current.clear();
                       setConsultationReason("");
                       setCurrentIllness("");
                       setPhysicalExam("");
@@ -1004,6 +1172,8 @@ function HistoriasClinicasPageInner() {
                       type="button"
                       onClick={() => {
                         setEditingNoteId(n.id);
+                        setAttachments(n.attachments ?? []);
+                        pendingDriveIdsRef.current.clear();
                         setConsultationReason(n.consultationReason ?? "");
                         setCurrentIllness(n.currentIllness ?? "");
                         setPhysicalExam(n.physicalExam ?? "");
@@ -1040,6 +1210,8 @@ function HistoriasClinicasPageInner() {
                 type="button"
                 onClick={() => {
                   setEditingNoteId(null);
+                  setAttachments([]);
+                  pendingDriveIdsRef.current.clear();
                   setConsultationReason("");
                   setCurrentIllness("");
                   setPhysicalExam("");
@@ -1105,6 +1277,8 @@ function HistoriasClinicasPageInner() {
                       type="button"
                       onClick={() => {
                         setEditingNoteId(n.id);
+                        setAttachments(n.attachments ?? []);
+                        pendingDriveIdsRef.current.clear();
                         setConsultationReason(n.consultationReason ?? "");
                         setCurrentIllness(n.currentIllness ?? "");
                         setPhysicalExam(n.physicalExam ?? "");
@@ -1179,6 +1353,31 @@ function HistoriasClinicasPageInner() {
                     </>
                   );
                 })()}
+                {n.attachments && n.attachments.length > 0 && (
+                  <div className="mt-2 border-t border-slate-200 pt-2">
+                    <p className="font-semibold text-slate-800">
+                      Archivos adjuntos (Drive)
+                    </p>
+                    <ul className="mt-1 list-inside list-disc space-y-0.5 text-[11px] text-amber-900">
+                      {n.attachments.map((a) => (
+                        <li key={a.id}>
+                          {a.webViewLink ? (
+                            <a
+                              href={a.webViewLink}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="underline"
+                            >
+                              {a.name}
+                            </a>
+                          ) : (
+                            <span>{a.name}</span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </article>
             ))}
             </div>

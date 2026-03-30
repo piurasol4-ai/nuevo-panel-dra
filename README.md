@@ -47,6 +47,9 @@ Este proyecto ya está preparado para desplegarse en Railway.
   - `APP_BASE_URL`
   - `DECOLECTA_API_TOKEN` (si aplica)
   - `SMTP_*` (si aplica)
+  - **Adjuntos en Historias clínicas (Google Drive):**
+    - `GOOGLE_SERVICE_ACCOUNT_JSON`: JSON de una **cuenta de servicio** de Google Cloud con la API de Drive habilitada.
+    - `GOOGLE_DRIVE_FOLDER_ID`: ID de la carpeta donde se guardarán PDF/imágenes. Comparte esa carpeta con el correo `client_email` del JSON (rol **Editor**).
 
 ### 4) Build y arranque
 - Railway usa `railway.json`:
