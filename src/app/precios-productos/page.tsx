@@ -142,6 +142,14 @@ export default function PreciosProductosPage() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [excelMessage, setExcelMessage] = useState<string | null>(null);
   const [importMode, setImportMode] = useState<ImportMode>("replace");
+  const [addFormOpen, setAddFormOpen] = useState(false);
+  const [newProduct, setNewProduct] = useState({
+    name: "",
+    category: "",
+    use: "",
+    stock: "0",
+    price: "S/ 0.00",
+  });
 
   useEffect(() => {
     Promise.resolve().then(async () => {
@@ -205,17 +213,39 @@ export default function PreciosProductosPage() {
       .catch(() => alert("No se pudo borrar el producto."));
   }
 
-  async function handleAddRow() {
+  function setNewProductField(
+    field: "name" | "category" | "use" | "stock" | "price",
+    value: string,
+  ) {
+    setNewProduct((prev) => {
+      if (field === "price") {
+        const clean = value.replace(/^S\/\s*/i, "").replace(/[^\d.,]/g, "");
+        const formatted = clean ? `S/ ${clean}` : "S/ 0.00";
+        return { ...prev, price: formatted };
+      }
+      if (field === "stock") {
+        return { ...prev, stock: value.replace(/[^\d]/g, "") };
+      }
+      return { ...prev, [field]: value };
+    });
+  }
+
+  async function handleCreateProduct() {
+    const name = newProduct.name.trim();
+    if (!name) {
+      alert("Escribe el nombre del medicamento o producto.");
+      return;
+    }
     try {
       const res = await fetch("/api/products", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          name: "Nuevo producto",
-          category: "",
-          use: "",
-          stock: "0",
-          price: "S/ 0.00",
+          name,
+          category: newProduct.category.trim(),
+          use: newProduct.use.trim(),
+          stock: newProduct.stock,
+          price: newProduct.price,
         }),
       });
       const payload = (await res.json().catch(() => null)) as
@@ -234,6 +264,14 @@ export default function PreciosProductosPage() {
       const created = payload as ProductRow;
       setRows((prev) => [...prev, created]);
       setEditingId(created.id);
+      setAddFormOpen(false);
+      setNewProduct({
+        name: "",
+        category: "",
+        use: "",
+        stock: "0",
+        price: "S/ 0.00",
+      });
     } catch {
       alert("No se pudo agregar el producto.");
       await refreshRows().catch(() => null);
@@ -470,12 +508,110 @@ export default function PreciosProductosPage() {
           </button>
           <button
             type="button"
-            onClick={() => void handleAddRow()}
-            className="rounded bg-amber-500 px-3 py-1.5 text-xs font-semibold text-black hover:bg-amber-600"
+            onClick={() => {
+              setAddFormOpen((open) => !open);
+              setExcelMessage(null);
+            }}
+            className={
+              "rounded px-3 py-1.5 text-xs font-semibold " +
+              (addFormOpen
+                ? "bg-amber-600 text-black ring-2 ring-amber-300"
+                : "bg-amber-500 text-black hover:bg-amber-600")
+            }
           >
-            Agregar producto
+            {addFormOpen ? "Ocultar formulario" : "Agregar producto"}
           </button>
         </div>
+        {addFormOpen && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50/80 p-4">
+            <p className="mb-3 text-xs font-semibold text-slate-800">
+              Nuevo producto
+            </p>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <label className="flex flex-col gap-1 text-xs sm:col-span-2">
+                <span className="font-medium text-slate-700">
+                  Medicamento / nombre <span className="text-red-600">*</span>
+                </span>
+                <input
+                  className="rounded border border-slate-300 bg-white px-3 py-2 text-sm"
+                  placeholder="Ej: Paracetamol 500 mg"
+                  value={newProduct.name}
+                  onChange={(e) =>
+                    setNewProductField("name", e.target.value)
+                  }
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-xs">
+                <span className="font-medium text-slate-700">Categoría</span>
+                <input
+                  className="rounded border border-slate-300 bg-white px-3 py-2 text-sm"
+                  placeholder="Ej: Analgésico"
+                  value={newProduct.category}
+                  onChange={(e) =>
+                    setNewProductField("category", e.target.value)
+                  }
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-xs sm:col-span-2">
+                <span className="font-medium text-slate-700">
+                  Uso principal
+                </span>
+                <input
+                  className="rounded border border-slate-300 bg-white px-3 py-2 text-sm"
+                  placeholder="Ej: Dolor y fiebre"
+                  value={newProduct.use}
+                  onChange={(e) => setNewProductField("use", e.target.value)}
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-xs">
+                <span className="font-medium text-slate-700">Stock</span>
+                <input
+                  className="rounded border border-slate-300 bg-white px-3 py-2 text-sm"
+                  inputMode="numeric"
+                  value={newProduct.stock}
+                  onChange={(e) =>
+                    setNewProductField("stock", e.target.value)
+                  }
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-xs">
+                <span className="font-medium text-slate-700">Precio (S/)</span>
+                <input
+                  className="rounded border border-slate-300 bg-white px-3 py-2 text-sm"
+                  value={newProduct.price}
+                  onChange={(e) =>
+                    setNewProductField("price", e.target.value)
+                  }
+                />
+              </label>
+            </div>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => void handleCreateProduct()}
+                className="rounded bg-amber-500 px-4 py-2 text-sm font-semibold text-black hover:bg-amber-600"
+              >
+                Crear producto
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setAddFormOpen(false);
+                  setNewProduct({
+                    name: "",
+                    category: "",
+                    use: "",
+                    stock: "0",
+                    price: "S/ 0.00",
+                  });
+                }}
+                className="rounded border border-slate-300 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        )}
         {excelMessage && (
           <p className="text-xs text-slate-600">{excelMessage}</p>
         )}
@@ -511,7 +647,7 @@ export default function PreciosProductosPage() {
                   </td>
                 </tr>
               ) : (
-                rows.slice(0, 15).map((row) => (
+                rows.map((row) => (
                   <tr key={row.id} className="hover:bg-slate-50">
                   <td className="border border-slate-200 px-3 py-1.5 text-[13px]">
                     {editingId === row.id ? (
