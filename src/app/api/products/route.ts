@@ -1,6 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { centsToDisplay, parseSolesToCents } from "@/lib/money";
+
+async function uniqueProductName(base: string): Promise<string> {
+  const trimmed = base.trim() || "Producto sin nombre";
+  let candidate = trimmed;
+  let n = 2;
+  while (
+    await prisma.productCatalog.findFirst({ where: { name: candidate } })
+  ) {
+    candidate = `${trimmed} (${n})`;
+    n += 1;
+  }
+  return candidate;
+}
 
 const DEFAULT_PRODUCTS: Array<{
   name: string;
@@ -67,69 +81,124 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-  const body = (await request.json().catch(() => null)) as
-    | {
-        name?: unknown;
-        category?: unknown;
-        use?: unknown;
-        stock?: unknown;
-        price?: unknown;
-      }
-    | null;
-  const name = String(body?.name ?? "").trim();
-  const category = String(body?.category ?? "").trim();
-  const use = String(body?.use ?? "").trim();
-  const stock = parseInt(String(body?.stock ?? "0").replace(/[^\d]/g, ""), 10);
-  const unitPriceCents = parseSolesToCents(body?.price);
-  if (!name) return NextResponse.json({ error: "Falta name." }, { status: 400 });
+  try {
+    const body = (await request.json().catch(() => null)) as
+      | {
+          name?: unknown;
+          category?: unknown;
+          use?: unknown;
+          stock?: unknown;
+          price?: unknown;
+        }
+      | null;
+    const requestedName = String(body?.name ?? "").trim();
+    const category = String(body?.category ?? "").trim();
+    const use = String(body?.use ?? "").trim();
+    const stock = parseInt(String(body?.stock ?? "0").replace(/[^\d]/g, ""), 10);
+    const unitPriceCents = parseSolesToCents(body?.price);
+    if (!requestedName) {
+      return NextResponse.json(
+        { error: "Falta el nombre del producto." },
+        { status: 400 },
+      );
+    }
 
-  const created = await prisma.productCatalog.create({
-    data: {
-      name,
-      category,
-      use,
-      stock: Number.isFinite(stock) ? stock : 0,
-      unitPriceCents,
-    },
-  });
-  return NextResponse.json(toDto(created), { status: 201 });
+    // `name` es único en BD: varios "Agregar producto" con el mismo texto fallarían.
+    const name = await uniqueProductName(requestedName);
+
+    const created = await prisma.productCatalog.create({
+      data: {
+        name,
+        category,
+        use,
+        stock: Number.isFinite(stock) ? stock : 0,
+        unitPriceCents,
+      },
+    });
+    return NextResponse.json(toDto(created), { status: 201 });
+  } catch (error) {
+    console.error("POST /api/products", error);
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      if (error.code === "P2002") {
+        return NextResponse.json(
+          { error: "Ya existe un producto con ese nombre." },
+          { status: 409 },
+        );
+      }
+    }
+    return NextResponse.json(
+      { error: "No se pudo crear el producto en la base de datos." },
+      { status: 500 },
+    );
+  }
 }
 
 export async function PUT(request: NextRequest) {
-  const body = (await request.json().catch(() => null)) as
-    | {
-        id?: unknown;
-        name?: unknown;
-        category?: unknown;
-        use?: unknown;
-        stock?: unknown;
-        price?: unknown;
+  try {
+    const body = (await request.json().catch(() => null)) as
+      | {
+          id?: unknown;
+          name?: unknown;
+          category?: unknown;
+          use?: unknown;
+          stock?: unknown;
+          price?: unknown;
+        }
+      | null;
+    const id = Number(body?.id);
+    if (!Number.isFinite(id) || id <= 0) {
+      return NextResponse.json({ error: "id inválido." }, { status: 400 });
+    }
+
+    const name = String(body?.name ?? "").trim();
+    const category = String(body?.category ?? "").trim();
+    const use = String(body?.use ?? "").trim();
+    const stock = parseInt(String(body?.stock ?? "0").replace(/[^\d]/g, ""), 10);
+    const unitPriceCents = parseSolesToCents(body?.price);
+
+    if (!name) {
+      return NextResponse.json(
+        { error: "Falta el nombre del producto." },
+        { status: 400 },
+      );
+    }
+
+    const otherWithName = await prisma.productCatalog.findFirst({
+      where: { name, id: { not: id } },
+    });
+    if (otherWithName) {
+      return NextResponse.json(
+        { error: "Ya existe otro producto con ese nombre." },
+        { status: 409 },
+      );
+    }
+
+    const updated = await prisma.productCatalog.update({
+      where: { id },
+      data: {
+        name,
+        category,
+        use,
+        stock: Number.isFinite(stock) ? stock : 0,
+        unitPriceCents,
+      },
+    });
+    return NextResponse.json(toDto(updated));
+  } catch (error) {
+    console.error("PUT /api/products", error);
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      if (error.code === "P2002") {
+        return NextResponse.json(
+          { error: "Ya existe un producto con ese nombre." },
+          { status: 409 },
+        );
       }
-    | null;
-  const id = Number(body?.id);
-  if (!Number.isFinite(id) || id <= 0) {
-    return NextResponse.json({ error: "id inválido." }, { status: 400 });
+    }
+    return NextResponse.json(
+      { error: "No se pudo actualizar el producto." },
+      { status: 500 },
+    );
   }
-
-  const name = String(body?.name ?? "").trim();
-  const category = String(body?.category ?? "").trim();
-  const use = String(body?.use ?? "").trim();
-  const stock = parseInt(String(body?.stock ?? "0").replace(/[^\d]/g, ""), 10);
-  const unitPriceCents = parseSolesToCents(body?.price);
-
-  if (!name) return NextResponse.json({ error: "Falta name." }, { status: 400 });
-
-  const updated = await prisma.productCatalog.update({
-    where: { id },
-    data: {
-      name,
-      category,
-      use,
-      stock: Number.isFinite(stock) ? stock : 0,
-      unitPriceCents,
-    },
-  });
-  return NextResponse.json(toDto(updated));
 }
 
 export async function DELETE(request: NextRequest) {

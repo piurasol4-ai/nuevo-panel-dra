@@ -218,8 +218,20 @@ export default function PreciosProductosPage() {
           price: "S/ 0.00",
         }),
       });
-      if (!res.ok) throw new Error("Error agregando producto");
-      const created = (await res.json()) as ProductRow;
+      const payload = (await res.json().catch(() => null)) as
+        | ProductRow
+        | { error?: string }
+        | null;
+      if (!res.ok) {
+        const msg =
+          payload && "error" in payload && payload.error
+            ? String(payload.error)
+            : "No se pudo agregar el producto.";
+        alert(msg);
+        await refreshRows().catch(() => null);
+        return;
+      }
+      const created = payload as ProductRow;
       setRows((prev) => [...prev, created]);
       setEditingId(created.id);
     } catch {
@@ -242,8 +254,19 @@ export default function PreciosProductosPage() {
           price: row.price,
         }),
       });
-      if (!res.ok) throw new Error("Error guardando producto");
-      const updated = (await res.json()) as ProductRow;
+      const payload = (await res.json().catch(() => null)) as
+        | ProductRow
+        | { error?: string }
+        | null;
+      if (!res.ok) {
+        const msg =
+          payload && "error" in payload && payload.error
+            ? String(payload.error)
+            : "No se pudo guardar el producto.";
+        alert(msg);
+        return;
+      }
+      const updated = payload as ProductRow;
       setRows((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
       setEditingId(null);
     } catch {
