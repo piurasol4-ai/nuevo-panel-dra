@@ -37,6 +37,12 @@ type Visit = {
   heartRate: string | null;
   respiratoryRate: string | null;
   glucose: string | null;
+  /** Nombre del procedimiento según la cita (snapshot) */
+  procedureName: string | null;
+  /** Detalle / notas del procedimiento en la ficha */
+  procedureNote: string | null;
+  auxiliaryExams: string | null;
+  medicalRest: string | null;
   /** Archivos en Google Drive (solo metadatos en BD) */
   attachments?: ClinicalAttachment[];
 };
@@ -68,6 +74,10 @@ type ClinicalVisitDTO = {
   heartRate: string | null;
   respiratoryRate: string | null;
   glucose: string | null;
+  procedureName: string | null;
+  procedureNote: string | null;
+  auxiliaryExams: string | null;
+  medicalRest: string | null;
   attachments: ClinicalAttachment[];
 };
 
@@ -96,6 +106,12 @@ type VisitBodyInput = {
   respiratoryRate?: string | null;
   glucose?: string | null;
   attachments?: unknown;
+  /** ISO de la atención (p. ej. hora de la cita en agenda) */
+  createdAt?: string;
+  procedureName?: string | null;
+  procedureNote?: string | null;
+  auxiliaryExams?: string | null;
+  medicalRest?: string | null;
 };
 
 function isClinicalAttachment(x: unknown): x is ClinicalAttachment {
@@ -157,6 +173,10 @@ function toVisitDTO(patientId: string, historyNumber: number, v: Visit) {
     heartRate: v.heartRate,
     respiratoryRate: v.respiratoryRate,
     glucose: v.glucose,
+    procedureName: v.procedureName ?? null,
+    procedureNote: v.procedureNote ?? null,
+    auxiliaryExams: v.auxiliaryExams ?? null,
+    medicalRest: v.medicalRest ?? null,
     attachments: normalizeAttachments(v.attachments),
   } satisfies ClinicalVisitDTO;
 }
@@ -185,6 +205,10 @@ function mapBodyToVisitFields(body: Partial<VisitBodyInput>) {
     heartRate: body.heartRate ?? null,
     respiratoryRate: body.respiratoryRate ?? null,
     glucose: body.glucose ?? null,
+    procedureName: body.procedureName ?? null,
+    procedureNote: body.procedureNote ?? null,
+    auxiliaryExams: body.auxiliaryExams ?? null,
+    medicalRest: body.medicalRest ?? null,
   };
 }
 
@@ -235,6 +259,10 @@ async function loadHistoryAndVisits(patientId: string) {
     heartRate: r.heartRate ?? null,
     respiratoryRate: r.respiratoryRate ?? null,
     glucose: r.glucose ?? null,
+    procedureName: null,
+    procedureNote: null,
+    auxiliaryExams: null,
+    medicalRest: null,
     attachments: [],
   }));
 
@@ -292,9 +320,14 @@ export async function POST(request: NextRequest) {
     const visitDate =
       body.visitDate ?? new Date().toISOString().slice(0, 10);
 
+    const createdAtIso =
+      typeof body.createdAt === "string" && body.createdAt.length > 10
+        ? body.createdAt
+        : new Date().toISOString();
+
     const newVisit: Visit = {
       id: crypto.randomUUID(),
-      createdAt: new Date().toISOString(),
+      createdAt: createdAtIso,
       visitDate,
       ...(mapBodyToVisitFields({ ...body, visitDate }) as Omit<
         Visit,

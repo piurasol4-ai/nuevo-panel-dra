@@ -15,29 +15,6 @@ registerLocale("es", es);
 
 type AppointmentWithPatient = Appointment & { patient: Patient };
 
-type ClinicalHistorySnapshot = {
-  id: string;
-  visitDate: string | null;
-  createdAt: string;
-  consultationReason: string | null;
-  currentIllness: string | null;
-  physicalExam: string | null;
-  diagnostics: string | null;
-  diagnosis: string | null;
-  treatmentPlan: string | null;
-  evolutionNotes: string | null;
-  nursingNotes: string | null;
-  treatmentNotes: string | null;
-  weight: string | null;
-  height: string | null;
-  bodyTemperature: string | null;
-  bloodPressure: string | null;
-  oxygenSaturation: string | null;
-  heartRate: string | null;
-  respiratoryRate: string | null;
-  glucose: string | null;
-};
-
 function safeJsonParse<T>(text: string, fallback: T): T {
   if (!text) return fallback;
   try {
@@ -45,20 +22,6 @@ function safeJsonParse<T>(text: string, fallback: T): T {
   } catch {
     return fallback;
   }
-}
-
-function mergeRecipeIntoTreatmentNotes(
-  currentNotes: string | null | undefined,
-  recipeText: string,
-) {
-  const recipe = recipeText.trim();
-  if (!recipe) return currentNotes ?? null;
-
-  const normalizedCurrent = (currentNotes ?? "").trim();
-  const block = `Receta:\n${recipe}`;
-  if (!normalizedCurrent) return block;
-  if (normalizedCurrent.includes(block)) return normalizedCurrent;
-  return `${normalizedCurrent}\n\n${block}`;
 }
 
 function AgendaPageInner() {
@@ -333,184 +296,6 @@ function AgendaPageInner() {
       .replace(/'/g, "&#39;");
   }
 
-  function buildRecipePrintHtml(params: {
-    recipe: Recipe;
-    patient: Patient;
-    appt: AppointmentWithPatient;
-    logoUrl: string;
-    fechaCreacion: string;
-    fechaImpresion: string;
-    edadTexto: string;
-  }) {
-    const { recipe, patient, appt, logoUrl, fechaCreacion, fechaImpresion, edadTexto } =
-      params;
-
-    const nombre = escapeHtml(patient.fullName);
-    const dni = escapeHtml(formatPatientDocument(patient));
-    const telefono = escapeHtml(patient.phone);
-    const motivoInicial = escapeHtml(patient.notes ?? "");
-    const alergias = escapeHtml(patient.allergyNotes ?? "");
-
-    const diagnostico = escapeHtml(recipe.diagnosis ?? "");
-    const plan = escapeHtml(recipe.workPlan ?? "");
-    const receta = escapeHtml(recipe.prescriptionText ?? "");
-
-    return `<!DOCTYPE html>
-<html lang="es">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Receta</title>
-    <style>
-      body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 24px; color: #111827; }
-      .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px; margin-bottom: 12px; }
-      .clinic-info { display: flex; align-items: center; gap: 10px; }
-      .clinic-name { font-weight: 700; font-size: 18px; }
-      .clinic-subtitle { font-size: 12px; color: #fbbf24; margin-top: 2px; }
-      .meta { font-size: 12px; color: #4b5563; }
-      .label { font-weight: 600; }
-      .section-box { border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px 10px; margin-top: 8px; }
-      .block { font-size: 13px; white-space: pre-wrap; }
-      .logo { height: 52px; }
-      .footer { margin-top: 22px; padding-top: 10px; border-top: 1px solid #e5e7eb; display: flex; justify-content: space-between; gap: 18px; }
-      .line { height: 1px; background: #9ca3af; margin-top: 34px; }
-      .sign-label { margin-top: 6px; font-size: 12px; color: #4b5563; }
-      h1 { font-size: 20px; margin-bottom: 4px; }
-      h2 { font-size: 16px; margin-top: 18px; margin-bottom: 4px; }
-    </style>
-  </head>
-  <body>
-    <div class="header">
-      <div class="clinic-info">
-        <img src="${logoUrl}" alt="Logo Harmonia Center" class="logo" />
-        <div>
-          <div class="clinic-name">Harmonia Center</div>
-          <div class="clinic-subtitle">Medicina Alternativa Complementaria</div>
-          <div class="meta">Receta N.º ${recipe.recipeNumber}</div>
-        </div>
-      </div>
-      <div class="meta">
-        <div><span class="label">Fecha y hora de creación:</span> ${fechaCreacion}</div>
-        <div><span class="label">Fecha y hora de impresión:</span> ${fechaImpresion}</div>
-      </div>
-    </div>
-
-    <h1>Datos del paciente</h1>
-    <div class="section-box">
-      <div><span class="label">Nombre:</span> ${nombre}</div>
-      <div><span class="label">Documento:</span> ${dni}</div>
-      <div><span class="label">Teléfono:</span> ${telefono}</div>
-      <div><span class="label">Edad:</span> ${escapeHtml(edadTexto)}</div>
-      ${
-        motivoInicial
-          ? `<div><span class="label">Motivo Inicial de Consulta:</span> ${motivoInicial}</div>`
-          : ""
-      }
-      ${
-        alergias
-          ? `<div><span class="label">Alergias (inscripción):</span> ${alergias}</div>`
-          : ""
-      }
-      <div><span class="label">Procedimiento:</span> ${escapeHtml(appt.type ?? "")}</div>
-    </div>
-
-    <h2>Diagnóstico</h2>
-    <div class="section-box block">${diagnostico}</div>
-
-    <h2>Plan de trabajo</h2>
-    <div class="section-box block">${plan}</div>
-
-    <h2>Receta</h2>
-    <div class="section-box block">${receta}</div>
-
-    <div class="footer">
-      <div class="sign">
-        <div class="line"></div>
-        <div class="sign-label">Dra. Leidy Rosales Jiménez</div>
-      </div>
-      <div class="sign">
-        <div class="line"></div>
-        <div class="sign-label">Firma del paciente</div>
-      </div>
-    </div>
-  </body>
-</html>`;
-  }
-
-  function handlePrintRecipe(recipe: Recipe, appt: AppointmentWithPatient) {
-    if (typeof window === "undefined") return;
-
-    const patient = appt.patient;
-    const win = window.open("", "_blank");
-    if (!win) return;
-    try {
-      win.opener = null;
-    } catch {
-      // ignore
-    }
-
-    const fechaCreacion = new Date(recipe.createdAt).toLocaleString("es-PE", {
-      dateStyle: "medium",
-      timeStyle: "short",
-    });
-    const fechaImpresion = new Date().toLocaleString("es-PE", {
-      dateStyle: "medium",
-      timeStyle: "short",
-    });
-    const edadTexto = calcularEdadDetallada(
-      patient.birthDate as unknown as string,
-    );
-
-    const logoUrl = new URL("/logo-harmonia.png", window.location.origin).href;
-
-    const html = buildRecipePrintHtml({
-      recipe,
-      patient,
-      appt,
-      logoUrl,
-      fechaCreacion,
-      fechaImpresion,
-      edadTexto,
-    });
-
-    win.document.open();
-    win.document.write(html);
-    win.document.close();
-    win.focus();
-    setTimeout(() => {
-      win.print();
-    }, 300);
-  }
-
-  function handleSendRecipeWhatsapp(
-    recipe: Recipe,
-    appt: AppointmentWithPatient,
-  ) {
-    if (typeof window === "undefined") return;
-
-    const patient = appt.patient;
-    const phoneDigits = String(patient.phone ?? "").replace(/\D/g, "");
-    if (!phoneDigits) {
-      setAttentionError("El paciente no tiene un número de WhatsApp/telefono.");
-      return;
-    }
-
-    const waNumber = phoneDigits.startsWith("51")
-      ? phoneDigits
-      : `51${phoneDigits}`;
-
-    const receta = recipe.prescriptionText ?? "";
-
-    const texto = receta ? `Receta: ${receta}` : "";
-
-    const fullMessage = `Hamonia CenterH., Buen día: Sr(a) ${patient.fullName} le hacemos saber que: ${texto}`;
-
-    const url = `https://wa.me/${waNumber}?text=${encodeURIComponent(
-      fullMessage,
-    )}`;
-    window.open(url, "_blank");
-  }
-
   function handleSendAppointmentReminderWhatsapp(
     appt: AppointmentWithPatient,
   ) {
@@ -721,33 +506,6 @@ function AgendaPageInner() {
     }
   }
 
-  type Recipe = {
-    id: string;
-    patientId: string;
-    appointmentId: string | null;
-    recipeNumber: number;
-    createdAt: string;
-    diagnosis: string | null;
-    workPlan: string | null;
-    prescriptionText: string | null;
-  };
-
-  const [showAttention, setShowAttention] = useState(false);
-  const [attentionAppointmentId, setAttentionAppointmentId] = useState<string>(
-    "",
-  );
-  const [attentionTab, setAttentionTab] = useState<
-    "nueva" | "registradas"
-  >("nueva");
-  const [recipes, setRecipes] = useState<Recipe[]>([]);
-  const [attentionDiagnosis, setAttentionDiagnosis] = useState("");
-  const [attentionWorkPlan, setAttentionWorkPlan] = useState("");
-  const [attentionPrescription, setAttentionPrescription] = useState("");
-  const [attentionError, setAttentionError] = useState<string | null>(null);
-  const [attentionClinicalSnapshot, setAttentionClinicalSnapshot] =
-    useState<ClinicalHistorySnapshot | null>(null);
-  const [attentionClinicalLoading, setAttentionClinicalLoading] = useState(false);
-
   const [showTicketModal, setShowTicketModal] = useState(false);
   const [ticketAppointment, setTicketAppointment] =
     useState<AppointmentWithPatient | null>(null);
@@ -784,68 +542,57 @@ function AgendaPageInner() {
   const [ticketSaving, setTicketSaving] = useState(false);
   const [ticketError, setTicketError] = useState<string | null>(null);
 
-  function calcularEdadDetallada(fechaISO: string | Date) {
-    const fecha =
-      typeof fechaISO === "string" ? new Date(fechaISO) : (fechaISO as Date);
-    if (Number.isNaN(fecha.getTime())) return "";
-    const hoy = new Date();
-    let años = hoy.getFullYear() - fecha.getFullYear();
-    let meses = hoy.getMonth() - fecha.getMonth();
-    let dias = hoy.getDate() - fecha.getDate();
-    if (dias < 0) {
-      meses -= 1;
-      const previoMes = new Date(hoy.getFullYear(), hoy.getMonth(), 0);
-      dias += previoMes.getDate();
-    }
-    if (meses < 0) {
-      meses += 12;
-      años -= 1;
-    }
-    if (años < 0) return "";
-    return `${años} años, ${meses} meses y ${dias} días`;
-  }
-
   async function openAttentionForAppointment(a: AppointmentWithPatient) {
-    setAttentionError(null);
-    setAttentionAppointmentId(a.id);
-    setShowAttention(true);
-    setAttentionTab("nueva");
-    setAttentionClinicalSnapshot(null);
-    setAttentionClinicalLoading(true);
-
-    // Cargamos recetas de la cita y última historia clínica del paciente.
-    const [recipesRes, historyRes] = await Promise.allSettled([
-      fetch(`/api/recipes?appointmentId=${a.id}`),
-      fetch(`/api/clinical-notes?patientId=${encodeURIComponent(a.patientId)}`),
-    ]);
-
-    if (recipesRes.status === "fulfilled") {
-      try {
-        const data = (await recipesRes.value.json()) as Recipe[];
-        setRecipes(Array.isArray(data) ? data : []);
-      } catch {
-        setRecipes([]);
+    const targetVisitDate = toLocalISODate(new Date(a.startAt));
+    const createdAtIso = new Date(a.startAt).toISOString();
+    try {
+      const notesRes = await fetch(
+        `/api/clinical-notes?patientId=${encodeURIComponent(a.patientId)}`,
+      );
+      const visits = (await notesRes.json()) as Array<{
+        id: string;
+        appointmentId?: string | null;
+      }>;
+      let visitId: string | null = null;
+      if (notesRes.ok && Array.isArray(visits)) {
+        const found = visits.find((v) => v.appointmentId === a.id);
+        if (found) visitId = found.id;
       }
-    } else {
-      setRecipes([]);
-    }
-
-    if (historyRes.status === "fulfilled") {
-      try {
-        const raw = (await historyRes.value.json()) as unknown;
-        const visits = Array.isArray(raw) ? (raw as ClinicalHistorySnapshot[]) : [];
-        setAttentionClinicalSnapshot(visits[0] ?? null);
-      } catch {
-        setAttentionClinicalSnapshot(null);
+      if (!visitId) {
+        const postRes = await fetch("/api/clinical-notes", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            patientId: a.patientId,
+            visitDate: targetVisitDate,
+            appointmentId: a.id,
+            createdAt: createdAtIso,
+            consultationReason: a.reason || null,
+            procedureName: a.type || null,
+          }),
+        });
+        const payload = (await postRes.json().catch(() => null)) as
+          | { id?: string; error?: string }
+          | null;
+        if (!postRes.ok) {
+          alert(
+            payload?.error ??
+              "No se pudo crear la ficha de atención. Intenta de nuevo.",
+          );
+          return;
+        }
+        visitId = payload?.id ?? null;
       }
-    } else {
-      setAttentionClinicalSnapshot(null);
+      if (!visitId) {
+        alert("No se pudo obtener el identificador de la ficha.");
+        return;
+      }
+      window.location.href = `/registro-atenciones?patientId=${encodeURIComponent(
+        a.patientId,
+      )}&visitId=${encodeURIComponent(visitId)}`;
+    } catch {
+      alert("No se pudo abrir el registro de atenciones.");
     }
-    setAttentionClinicalLoading(false);
-
-    setAttentionDiagnosis("");
-    setAttentionWorkPlan("");
-    setAttentionPrescription("");
   }
 
   async function openTicketForAppointment(a: AppointmentWithPatient) {
@@ -1439,122 +1186,6 @@ function AgendaPageInner() {
     }, 300);
   }
 
-  async function handleSaveRecipe(e: React.FormEvent) {
-    e.preventDefault();
-    setAttentionError(null);
-    if (!attentionAppointmentId) {
-      setAttentionError("Selecciona una cita primero.");
-      return;
-    }
-
-    const appt = appointments.find((x) => x.id === attentionAppointmentId);
-    if (!appt) {
-      setAttentionError("No se encontró la cita.");
-      return;
-    }
-
-    if (!attentionDiagnosis.trim()) {
-      setAttentionError("El diagnóstico es obligatorio.");
-      return;
-    }
-    if (!attentionPrescription.trim()) {
-      setAttentionError("La receta es obligatoria.");
-      return;
-    }
-
-    try {
-      const res = await fetch("/api/recipes", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          patientId: appt.patientId,
-          appointmentId: appt.id,
-          diagnosis: attentionDiagnosis,
-          workPlan: attentionWorkPlan || null,
-          prescriptionText: attentionPrescription,
-        }),
-      });
-      const payloadUnknown = await res.json();
-      if (!res.ok) {
-        const maybeError = payloadUnknown as { error?: unknown };
-        setAttentionError(
-          typeof maybeError.error === "string"
-            ? maybeError.error
-            : "No se pudo crear la receta.",
-        );
-        return;
-      }
-
-      const payload = payloadUnknown as Recipe;
-      setRecipes((prev) => [payload, ...prev]);
-
-      // Sincroniza el diagnóstico de Atención con la historia clínica del día.
-      try {
-        const targetVisitDate = toLocalISODate(new Date(appt.startAt));
-        const notesRes = await fetch(
-          `/api/clinical-notes?patientId=${encodeURIComponent(appt.patientId)}`,
-        );
-        const notesTxt = await notesRes.text();
-        const notesData = safeJsonParse<ClinicalHistorySnapshot[] | { error?: string }>(
-          notesTxt,
-          [],
-        );
-
-        if (notesRes.ok && Array.isArray(notesData)) {
-          const sameDayVisit = notesData.find((n) => n.visitDate === targetVisitDate);
-
-          if (sameDayVisit) {
-            await fetch("/api/clinical-notes", {
-              method: "PUT",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                id: sameDayVisit.id,
-                patientId: appt.patientId,
-                diagnosis: attentionDiagnosis.trim(),
-                treatmentPlan: attentionWorkPlan.trim() || null,
-                treatmentNotes: mergeRecipeIntoTreatmentNotes(
-                  sameDayVisit.treatmentNotes,
-                  attentionPrescription,
-                ),
-              }),
-            });
-          } else {
-            await fetch("/api/clinical-notes", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                patientId: appt.patientId,
-                visitDate: targetVisitDate,
-                appointmentId: appt.id,
-                diagnosis: attentionDiagnosis.trim(),
-                treatmentPlan: attentionWorkPlan.trim() || null,
-                treatmentNotes: mergeRecipeIntoTreatmentNotes(
-                  null,
-                  attentionPrescription,
-                ),
-              }),
-            });
-          }
-        }
-      } catch {
-        // No bloqueamos la receta si falla la sincronización de historia.
-      }
-
-      // Actualizar estado de la cita en pantalla (verde) al concluir con receta
-      setAppointments((prev) =>
-        prev.map((a) =>
-          a.id === appt.id ? { ...a, status: "Concluida" } : a,
-        ),
-      );
-      setAttentionTab("registradas");
-      setAttentionDiagnosis("");
-      setAttentionWorkPlan("");
-      setAttentionPrescription("");
-    } catch {
-      setAttentionError("No se pudo crear la receta.");
-    }
-  }
-
   function handleStartTimeChange(value: string) {
     setStartTime(value);
     // Calcular hora de fin automática 30 minutos después
@@ -1991,308 +1622,6 @@ function AgendaPageInner() {
                 </button>
               </div>
             </form>
-          </div>
-        </div>
-      )}
-
-      {showAttention && (
-        <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/40 p-4">
-          <div className="flex max-h-[85vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl bg-white shadow-lg">
-            <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 p-4">
-              <h2 className="text-lg font-semibold text-slate-900">
-                Atención médica
-              </h2>
-              <button
-                type="button"
-                className="text-sm text-slate-500 hover:text-slate-800"
-                onClick={() => {
-                  setShowAttention(false);
-                  setAttentionAppointmentId("");
-                  setAttentionTab("nueva");
-                  setAttentionError(null);
-                }}
-              >
-                Cerrar
-              </button>
-            </div>
-
-            <div className="overflow-y-auto p-4">
-              <div className="mb-3 flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setAttentionTab("nueva")}
-                  className={
-                    "rounded border px-3 py-1.5 text-xs font-semibold " +
-                    (attentionTab === "nueva"
-                      ? "border-amber-300 bg-amber-50 text-amber-900"
-                      : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50")
-                  }
-                >
-                  Nueva receta
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setAttentionTab("registradas")}
-                  className={
-                    "rounded border px-3 py-1.5 text-xs font-semibold " +
-                    (attentionTab === "registradas"
-                      ? "border-amber-300 bg-amber-50 text-amber-900"
-                      : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50")
-                  }
-                >
-                  Recetas registradas
-                </button>
-              </div>
-
-              {(() => {
-                const appt = appointments.find(
-                  (x) => x.id === attentionAppointmentId,
-                );
-                if (!appt) {
-                  return (
-                    <p className="text-sm text-slate-600">
-                      No se encontró la cita.
-                    </p>
-                  );
-                }
-
-                const patient = appt.patient;
-                return (
-                  <>
-                    <div className="rounded-xl border border-slate-200 bg-white p-3 mb-4">
-                      <div className="flex items-start justify-between gap-4">
-                        <div>
-                          <p className="text-sm font-semibold text-slate-900">
-                            {patient.fullName}
-                          </p>
-                          <p className="text-xs text-slate-600">
-                            {formatPatientDocument(patient)} · Tel.{" "}
-                            {patient.phone}
-                          </p>
-                          <p className="text-xs text-slate-600">
-                            Edad:{" "}
-                            {calcularEdadDetallada(
-                              patient.birthDate as unknown as string,
-                            )}
-                          </p>
-                        </div>
-                        <div className="text-right">
-                          <p className="text-xs font-semibold text-slate-600">
-                            Procedimiento
-                          </p>
-                          <p className="text-sm font-semibold text-slate-900">
-                            {appt.type}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="rounded-xl border border-indigo-100 bg-indigo-50/50 p-3 mb-4">
-                      <p className="text-xs font-semibold uppercase tracking-wide text-indigo-700">
-                        Datos previos de historia clínica
-                      </p>
-                      {attentionClinicalLoading ? (
-                        <p className="mt-1 text-xs text-slate-600">
-                          Cargando última atención...
-                        </p>
-                      ) : (() => {
-                          const snapshot = attentionClinicalSnapshot;
-                          if (!snapshot) {
-                            return (
-                              <p className="mt-1 text-xs text-slate-600">
-                                Este paciente aún no tiene datos previos en su historia clínica.
-                              </p>
-                            );
-                          }
-
-                          const fields = [
-                            ["Fecha de atención", snapshot.visitDate],
-                            ["Motivo de consulta", snapshot.consultationReason],
-                            ["Enfermedad actual", snapshot.currentIllness],
-                            ["Examen físico", snapshot.physicalExam],
-                            ["Diagnóstico", snapshot.diagnosis],
-                            ["Plan de tratamiento", snapshot.treatmentPlan],
-                            ["Evolución", snapshot.evolutionNotes],
-                            ["Notas de Enfermería", snapshot.nursingNotes],
-                            ["Notas de tratamiento", snapshot.treatmentNotes],
-                            ["Peso", snapshot.weight],
-                            ["Talla", snapshot.height],
-                            ["Temperatura corporal", snapshot.bodyTemperature],
-                            ["Presión arterial", snapshot.bloodPressure],
-                            ["Saturación", snapshot.oxygenSaturation],
-                            ["Frecuencia cardíaca", snapshot.heartRate],
-                            ["Frecuencia respiratoria", snapshot.respiratoryRate],
-                            ["Glucosa", snapshot.glucose],
-                          ].filter(([, value]) => {
-                            if (value == null) return false;
-                            return String(value).trim().length > 0;
-                          });
-
-                          if (!fields.length) {
-                            return (
-                              <p className="mt-1 text-xs text-slate-600">
-                                La última atención no tiene campos llenados para mostrar.
-                              </p>
-                            );
-                          }
-
-                          return (
-                            <div className="mt-2 grid gap-2 md:grid-cols-2">
-                              {fields.map(([label, value]) => (
-                                <div
-                                  key={label}
-                                  className="rounded-lg border border-indigo-100 bg-white px-2 py-1.5"
-                                >
-                                  <p className="text-[11px] font-semibold text-indigo-800">
-                                    {label}
-                                  </p>
-                                  <p className="text-xs text-slate-700 whitespace-pre-wrap">
-                                    {value}
-                                  </p>
-                                </div>
-                              ))}
-                            </div>
-                          );
-                        })()}
-                    </div>
-
-                    {attentionTab === "nueva" ? (
-                      <form onSubmit={handleSaveRecipe} className="space-y-3">
-                        <div className="grid gap-3 lg:grid-cols-2">
-                          <div className="space-y-1">
-                            <label className="block text-xs text-slate-600">
-                              Diagnóstico
-                            </label>
-                            <textarea
-                              className="min-h-[80px] w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
-                              value={attentionDiagnosis}
-                              onChange={(e) =>
-                                setAttentionDiagnosis(e.target.value)
-                              }
-                              placeholder="Diagnóstico principal y/o observaciones clínicas…"
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <label className="block text-xs text-slate-600">
-                              Plan de Trabajo
-                            </label>
-                            <textarea
-                              className="min-h-[80px] w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
-                              value={attentionWorkPlan}
-                              onChange={(e) =>
-                                setAttentionWorkPlan(e.target.value)
-                              }
-                              placeholder="Procedimientos, terapias, controles…"
-                            />
-                          </div>
-                        </div>
-
-                        <div className="space-y-1">
-                          <label className="block text-xs text-slate-600">
-                            Receta
-                          </label>
-                          <textarea
-                            className="min-h-[100px] w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
-                            value={attentionPrescription}
-                            onChange={(e) =>
-                              setAttentionPrescription(e.target.value)
-                            }
-                            placeholder="Escribe la receta con formato: medicamento, dosis, frecuencia y duración…"
-                          />
-                        </div>
-
-                        {attentionError && (
-                          <p className="text-xs text-red-600">{attentionError}</p>
-                        )}
-
-                        <div className="flex justify-end gap-2 pt-2">
-                          <button
-                            type="button"
-                            className="rounded border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                            onClick={() => setAttentionTab("registradas")}
-                          >
-                            Ver recetas
-                          </button>
-                          <button
-                            type="submit"
-                            className="rounded bg-amber-500 px-4 py-2 text-xs font-semibold text-black hover:bg-amber-600"
-                          >
-                            Guardar receta
-                          </button>
-                        </div>
-                      </form>
-                    ) : (
-                      <div>
-                        {recipes.length === 0 ? (
-                          <p className="text-sm text-slate-500">
-                            Aún no hay recetas registradas para esta cita.
-                          </p>
-                        ) : (
-                          <div className="max-h-[420px] overflow-y-auto space-y-2">
-                            {recipes.slice(0, 15).map((r) => (
-                              <article
-                                key={r.id}
-                                className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs"
-                              >
-                                <div className="flex items-start justify-between gap-3">
-                                  <div>
-                                    <p className="text-[11px] font-semibold uppercase text-slate-500">
-                                      N.º Receta: {r.recipeNumber}
-                                    </p>
-                                    <p className="font-semibold text-slate-900">
-                                      {new Date(r.createdAt).toLocaleString(
-                                        "es-PE",
-                                        { dateStyle: "medium", timeStyle: "short" },
-                                      )}
-                                    </p>
-                                  </div>
-                                  <div className="flex items-center gap-2">
-                                    <button
-                                      type="button"
-                                      onClick={() => handlePrintRecipe(r, appt)}
-                                      className="rounded border border-slate-300 bg-white px-2 py-0.5 text-[10px] font-semibold text-slate-700 hover:bg-slate-100"
-                                    >
-                                      Imprimir
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => handleSendRecipeWhatsapp(r, appt)}
-                                      className="rounded border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 hover:bg-emerald-100"
-                                    >
-                                      WhatsApp
-                                    </button>
-                                  </div>
-                                </div>
-                                {r.diagnosis && (
-                                  <p className="mt-1 text-slate-700">
-                                    <span className="font-semibold">Diagnóstico:</span>{" "}
-                                    {r.diagnosis}
-                                  </p>
-                                )}
-                                {r.workPlan && (
-                                  <p className="mt-1 text-slate-700">
-                                    <span className="font-semibold">
-                                      Plan de Trabajo:
-                                    </span>{" "}
-                                    {r.workPlan}
-                                  </p>
-                                )}
-                                {r.prescriptionText && (
-                                  <p className="mt-1 text-slate-700 whitespace-pre-wrap">
-                                    <span className="font-semibold">Receta:</span>{" "}
-                                    {r.prescriptionText}
-                                  </p>
-                                )}
-                              </article>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </>
-                );
-              })()}
-            </div>
           </div>
         </div>
       )}
