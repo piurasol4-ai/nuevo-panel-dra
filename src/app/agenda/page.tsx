@@ -9,6 +9,8 @@ import { useSearchParams } from "next/navigation";
 
 import "react-datepicker/dist/react-datepicker.css";
 
+import { formatPatientDocument } from "@/lib/patient-document";
+
 registerLocale("es", es);
 
 type AppointmentWithPatient = Appointment & { patient: Patient };
@@ -289,7 +291,9 @@ function AgendaPageInner() {
     if (!patientId) return;
     const selected = patients.find((p) => p.id === patientId);
     if (!selected) return;
-    setPatientQuery(`${selected.fullName} · DNI ${selected.dni}`);
+    setPatientQuery(
+      `${selected.fullName} · ${formatPatientDocument(selected)}`,
+    );
   }, [patientId, patients]);
 
   async function loadProceduresFromStorage() {
@@ -342,7 +346,7 @@ function AgendaPageInner() {
       params;
 
     const nombre = escapeHtml(patient.fullName);
-    const dni = escapeHtml(patient.dni);
+    const dni = escapeHtml(formatPatientDocument(patient));
     const telefono = escapeHtml(patient.phone);
     const motivoInicial = escapeHtml(patient.notes ?? "");
     const alergias = escapeHtml(patient.allergyNotes ?? "");
@@ -394,7 +398,7 @@ function AgendaPageInner() {
     <h1>Datos del paciente</h1>
     <div class="section-box">
       <div><span class="label">Nombre:</span> ${nombre}</div>
-      <div><span class="label">DNI:</span> ${dni}</div>
+      <div><span class="label">Documento:</span> ${dni}</div>
       <div><span class="label">Teléfono:</span> ${telefono}</div>
       <div><span class="label">Edad:</span> ${escapeHtml(edadTexto)}</div>
       ${
@@ -678,7 +682,9 @@ function AgendaPageInner() {
     if (!q) return patients;
     return patients.filter(
       (p) =>
-        p.fullName.toLowerCase().includes(q) || p.dni.toLowerCase().includes(q),
+        p.fullName.toLowerCase().includes(q) ||
+        p.dni.toLowerCase().includes(q) ||
+        formatPatientDocument(p).toLowerCase().includes(q),
     );
   }, [patients, patientQuery]);
   const visibleFilteredPatients = useMemo(
@@ -688,7 +694,7 @@ function AgendaPageInner() {
 
   function pickPatient(p: Patient) {
     setPatientId(p.id);
-    setPatientQuery(`${p.fullName} · DNI ${p.dni}`);
+    setPatientQuery(`${p.fullName} · ${formatPatientDocument(p)}`);
     setPatientInputFocused(false);
     setPatientHighlightIndex(-1);
   }
@@ -939,7 +945,9 @@ function AgendaPageInner() {
           appointmentId: String(saved.appointmentId ?? a.id),
           patientId: String(saved.patientId ?? a.patientId),
           patientName: String(saved.patientName ?? a.patient.fullName),
-          patientDni: String(saved.patientDni ?? a.patient.dni),
+          patientDni: String(
+            saved.patientDni ?? formatPatientDocument(a.patient),
+          ),
           procedureName: String(saved.procedureName ?? procName),
           procedureUnitPriceSoles: Number(saved.procedureUnitPriceCents) / 100,
           paymentEfectivoSoles: Number(saved.paymentEfectivoCents) / 100,
@@ -1353,7 +1361,7 @@ function AgendaPageInner() {
     <div class="section">
       <div class="section-title">Datos del paciente</div>
       <div class="meta"><span class="label">Nombre:</span> ${nombre}</div>
-      <div class="meta"><span class="label">DNI:</span> ${dni}</div>
+      <div class="meta"><span class="label">Documento:</span> ${dni}</div>
     </div>
 
     <div class="section">
@@ -1806,7 +1814,7 @@ function AgendaPageInner() {
                 <div className="relative">
                   <input
                     className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
-                    placeholder="Buscar por nombre o DNI…"
+                    placeholder="Buscar por nombre o documento…"
                     value={patientQuery}
                     onChange={(e) => {
                       setPatientQuery(e.target.value);
@@ -1876,7 +1884,7 @@ function AgendaPageInner() {
                             {p.fullName}
                           </span>
                           <span className="ml-1 text-slate-600">
-                            · DNI {p.dni}
+                            · {formatPatientDocument(p)}
                           </span>
                         </li>
                       ))}
@@ -2058,7 +2066,8 @@ function AgendaPageInner() {
                             {patient.fullName}
                           </p>
                           <p className="text-xs text-slate-600">
-                            DNI {patient.dni} · Tel. {patient.phone}
+                            {formatPatientDocument(patient)} · Tel.{" "}
+                            {patient.phone}
                           </p>
                           <p className="text-xs text-slate-600">
                             Edad:{" "}
@@ -2323,7 +2332,9 @@ function AgendaPageInner() {
                     {ticketAppointment?.patient.fullName ?? "—"}
                   </div>
                   <div className="text-xs text-slate-600">
-                    DNI {ticketAppointment?.patient.dni ?? "—"}
+                    {ticketAppointment?.patient
+                      ? formatPatientDocument(ticketAppointment.patient)
+                      : "—"}
                   </div>
                   <div className="text-xs text-slate-600">
                     Fecha: {ticketDateISO || "—"}

@@ -4,6 +4,8 @@ import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import type { Patient } from "@prisma/client";
 import { useSearchParams } from "next/navigation";
 
+import { formatPatientDocument } from "@/lib/patient-document";
+
 // Evita el prerender estático en build (Railway/Next),
 // ya que esta página depende de estado del cliente y query params.
 export const dynamic = "force-dynamic";
@@ -117,7 +119,9 @@ function buildHistoriaClinicaHtml(
   logoUrl: string,
 ) {
   const nombre = escapeHtml(patient ? patient.fullName : "");
-  const dni = escapeHtml(patient ? patient.dni : "");
+  const dni = escapeHtml(
+    patient ? formatPatientDocument(patient) : "",
+  );
   const telefono = escapeHtml(patient ? patient.phone : "");
   const extra = patient ? asPatientExtras(patient) : null;
   const direccion = escapeHtml(extra?.address ?? "");
@@ -207,7 +211,7 @@ function buildHistoriaClinicaHtml(
     <h1>Datos del paciente</h1>
     <div class="section-box">
       <div><span class="label">Nombre:</span> ${nombre}</div>
-      <div><span class="label">DNI:</span> ${dni}</div>
+      <div><span class="label">Documento:</span> ${dni}</div>
       <div><span class="label">Teléfono:</span> ${telefono}</div>
       <div><span class="label">Edad:</span> ${edad}</div>
       ${
@@ -390,7 +394,8 @@ function HistoriasClinicasPageInner() {
     return patients.filter((p) => {
       return (
         p.fullName.toLowerCase().includes(q) ||
-        p.dni.toLowerCase().includes(q)
+        p.dni.toLowerCase().includes(q) ||
+        formatPatientDocument(p).toLowerCase().includes(q)
       );
     });
   }, [patients, patientQuery]);
@@ -778,7 +783,7 @@ function HistoriasClinicasPageInner() {
             <div className="flex gap-2">
               <input
                 className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
-                placeholder="Escribe nombre o DNI…"
+                placeholder="Escribe nombre o documento…"
                 value={patientQuery}
                 onChange={(e) => {
                   setPatientQuery(e.target.value);
@@ -810,14 +815,18 @@ function HistoriasClinicasPageInner() {
                     className="cursor-pointer px-3 py-1.5 hover:bg-slate-100"
                     onMouseDown={() => {
                       setSelectedPatientId(p.id);
-                      setPatientQuery(`${p.fullName} · DNI ${p.dni}`);
+                      setPatientQuery(
+                        `${p.fullName} · ${formatPatientDocument(p)}`,
+                      );
                       setPatientInputFocused(false);
                     }}
                   >
                     <span className="font-semibold text-slate-900">
                       {p.fullName}
                     </span>
-                    <span className="ml-1 text-slate-600">· DNI {p.dni}</span>
+                    <span className="ml-1 text-slate-600">
+                      · {formatPatientDocument(p)}
+                    </span>
                   </li>
                 ))}
               </ul>
@@ -829,7 +838,8 @@ function HistoriasClinicasPageInner() {
                 {selectedPatient.fullName}
               </p>
               <p>
-                DNI {selectedPatient.dni} · Tel. {selectedPatient.phone}
+                {formatPatientDocument(selectedPatient)} · Tel.{" "}
+                {selectedPatient.phone}
               </p>
               <p className="mt-0.5">
                 Inscrito:{" "}

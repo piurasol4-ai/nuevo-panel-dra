@@ -244,7 +244,7 @@ export default function FacturacionPage() {
     <div class="section">
       <div class="section-title">Datos del paciente</div>
       <div class="meta"><span class="label">Nombre:</span> ${nombre}</div>
-      <div class="meta"><span class="label">DNI:</span> ${dni}</div>
+      <div class="meta"><span class="label">Documento:</span> ${dni}</div>
     </div>
 
     <div class="section">
@@ -383,7 +383,7 @@ export default function FacturacionPage() {
                       Paciente
                     </th>
                     <th className="py-2 pl-2 text-xs font-semibold uppercase tracking-wide text-slate-700">
-                      DNI
+                      Documento
                     </th>
                     <th className="py-2 pl-2 text-xs font-semibold uppercase tracking-wide text-slate-700">
                       Procedimiento

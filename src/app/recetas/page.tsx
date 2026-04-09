@@ -8,6 +8,8 @@ import { es } from "date-fns/locale/es";
 
 import "react-datepicker/dist/react-datepicker.css";
 
+import { formatPatientDocument } from "@/lib/patient-document";
+
 registerLocale("es", es);
 
 type Recipe = {
@@ -73,7 +75,7 @@ function buildRecipePrintHtml(params: {
     params;
 
   const nombre = escapeHtml(patient.fullName);
-  const dni = escapeHtml(patient.dni);
+  const dni = escapeHtml(formatPatientDocument(patient));
   const telefono = escapeHtml(patient.phone);
   const direccion = escapeHtml(patient.address ?? "");
   const emergenciaNombre = escapeHtml(patient.emergencyContactName ?? "");
@@ -129,7 +131,7 @@ function buildRecipePrintHtml(params: {
     <h1>Datos del paciente</h1>
     <div class="section-box">
       <div><span class="label">Nombre:</span> ${nombre}</div>
-      <div><span class="label">DNI:</span> ${dni}</div>
+      <div><span class="label">Documento:</span> ${dni}</div>
       <div><span class="label">Teléfono:</span> ${telefono}</div>
       <div><span class="label">Edad:</span> ${escapeHtml(edadTexto)}</div>
       ${direccion ? `<div><span class="label">Dirección:</span> ${direccion}</div>` : ""}
@@ -249,7 +251,9 @@ export default function RecetasPage() {
     setRecipes([]);
 
     if (!term) {
-      setSearchError("Escribe un DNI (8 dígitos) o el nombre del paciente.");
+      setSearchError(
+        "Escribe documento (p. ej. DNI 8 dígitos) o el nombre del paciente.",
+      );
       return;
     }
 
@@ -268,13 +272,16 @@ export default function RecetasPage() {
         candidates = patients.filter(
           (p) =>
             p.fullName.toLowerCase().includes(lower) ||
-            (digits ? p.dni.includes(digits) : false),
+            (digits ? p.dni.includes(digits) : false) ||
+            formatPatientDocument(p).toLowerCase().includes(lower),
         );
       }
 
       if (candidates.length === 0) {
         if (termAtTrigger !== searchTerm.trim()) return;
-        setSearchError("No se encontró un paciente con ese DNI o nombre.");
+        setSearchError(
+          "No se encontró un paciente con ese documento o nombre.",
+        );
         setActiveSearchPatient(null);
         return;
       }
@@ -477,7 +484,8 @@ export default function RecetasPage() {
 
             <div className="space-y-1">
               <p className="text-xs font-semibold text-slate-700">
-                  Escribe un DNI (8 dígitos) o el nombre del paciente.
+                  Escribe documento (p. ej. DNI 8 dígitos) o nombre del
+                  paciente.
               </p>
               <div className="flex flex-col gap-2 sm:flex-row">
                 <input
@@ -534,7 +542,9 @@ export default function RecetasPage() {
                   className="w-full rounded border border-slate-200 bg-white px-3 py-2 text-left text-xs hover:bg-slate-100"
                 >
                   <div className="font-semibold text-slate-900">{p.fullName}</div>
-                  <div className="text-[11px] text-slate-600">DNI {p.dni}</div>
+                  <div className="text-[11px] text-slate-600">
+                    {formatPatientDocument(p)}
+                  </div>
                 </button>
               ))}
             </div>
@@ -562,7 +572,7 @@ export default function RecetasPage() {
                     Paciente
                   </th>
                   <th className="border-b border-slate-200 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide">
-                    DNI
+                    Documento
                   </th>
                   <th className="border-b border-slate-200 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide">
                     Procedimiento
@@ -582,7 +592,9 @@ export default function RecetasPage() {
                       {r.patient?.fullName ?? "—"}
                     </td>
                     <td className="border-b border-slate-100 px-3 py-2 text-slate-700">
-                      {r.patient?.dni ?? "—"}
+                      {r.patient
+                        ? formatPatientDocument(r.patient)
+                        : "—"}
                     </td>
                     <td className="border-b border-slate-100 px-3 py-2 text-slate-700">
                       {r.appointment?.type ?? "—"}

@@ -25,7 +25,8 @@ model User {
 model Patient {
   id                    String   @id @default(cuid())
   fullName              String
-  dni                   String   @unique
+  documentType          String   @default("dni")
+  dni                   String
   phone                 String
   address               String
   birthDate             DateTime
@@ -43,6 +44,8 @@ model Patient {
   clinicalNotes ClinicalNote[]
   recipes       Recipe[]
   ticketRecords TicketRecord[]
+
+  @@unique([documentType, dni])
 }
 
 model Appointment {

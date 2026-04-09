@@ -9,6 +9,15 @@ import { es } from "date-fns/locale/es";
 
 import "react-datepicker/dist/react-datepicker.css";
 
+import {
+  DOCUMENT_TYPE_LABELS,
+  DOCUMENT_TYPES,
+  type DocumentType,
+  formatPatientDocument,
+  normalizeDocumentType,
+  validatePatientDocument,
+} from "@/lib/patient-document";
+
 registerLocale("es", es);
 
 type PatientExtras = Patient & {
@@ -27,6 +36,7 @@ export default function PatientsPage() {
   const router = useRouter();
   const [patients, setPatients] = useState<Patient[]>([]);
   const [fullName, setFullName] = useState("");
+  const [documentType, setDocumentType] = useState<DocumentType>("dni");
   const [dni, setDni] = useState("");
   const [phone, setPhone] = useState("");
   const [address, setAddress] = useState("");
@@ -96,6 +106,9 @@ export default function PatientsPage() {
   }
 
   async function handleBuscarDni() {
+    if (documentType !== "dni") {
+      return;
+    }
     if (!dni || dni.length !== 8) {
       setDniError("Ingresa un DNI de 8 dígitos.");
       return;
@@ -144,8 +157,9 @@ export default function PatientsPage() {
 
     const newErrors: typeof formErrors = {};
 
-    if (!dni || dni.length !== 8) {
-      newErrors.dni = "El DNI debe tener 8 dígitos.";
+    const docCheck = validatePatientDocument(documentType, dni);
+    if (!docCheck.ok) {
+      newErrors.dni = docCheck.error;
     }
     if (!fullName.trim()) {
       newErrors.fullName = "El nombre es obligatorio.";
@@ -179,6 +193,7 @@ export default function PatientsPage() {
       body: JSON.stringify({
         id: editingId ?? undefined,
         fullName,
+        documentType,
         dni,
         phone,
         address,
@@ -213,6 +228,7 @@ export default function PatientsPage() {
         : [payload, ...prev],
     );
     setFullName("");
+    setDocumentType("dni");
     setDni("");
     setPhone("");
     setAddress("");
@@ -245,6 +261,7 @@ export default function PatientsPage() {
     const extra = asPatientExtras(patient);
     setEditingId(patient.id);
     setFullName(patient.fullName);
+    setDocumentType(normalizeDocumentType(patient.documentType));
     setDni(patient.dni);
     setPhone(patient.phone);
     setAddress(patient.address ?? "");
@@ -264,7 +281,10 @@ export default function PatientsPage() {
     const matchesName = searchName
       ? p.fullName.toLowerCase().includes(searchName.toLowerCase())
       : true;
-    const matchesDni = searchDni ? p.dni.includes(searchDni) : true;
+    const matchesDni = searchDni
+      ? formatPatientDocument(p).toLowerCase().includes(searchDni.toLowerCase()) ||
+        p.dni.toLowerCase().includes(searchDni.toLowerCase())
+      : true;
     return matchesName && matchesDni;
   });
 
@@ -280,27 +300,62 @@ export default function PatientsPage() {
         className="grid gap-4 lg:grid-cols-2 lg:items-start"
       >
         <div className="space-y-3">
-          <div className="flex flex-col items-stretch gap-1 sm:flex-row sm:items-center sm:gap-2">
-            <span className="text-xs text-slate-600 sm:whitespace-nowrap">DNI</span>
-            <input
-              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
-              placeholder="Número de documento"
-              value={dni}
-              onChange={(e) => {
-                const soloDigitos = e.target.value.replace(/\D/g, "").slice(0, 8);
-                setDni(soloDigitos);
-              }}
-              inputMode="numeric"
-              maxLength={8}
-            />
-            <button
-              type="button"
-              onClick={handleBuscarDni}
-              disabled={lookingUpDni}
-              className="whitespace-nowrap rounded bg-slate-900 px-3 py-2 text-xs font-medium text-white disabled:opacity-50"
-            >
-              {lookingUpDni ? "Buscando..." : "Buscar DNI"}
-            </button>
+          <div className="flex flex-col gap-2">
+            <span className="text-xs text-slate-600">Documento de identidad</span>
+            <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:items-center">
+              <select
+                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm sm:w-40"
+                value={documentType}
+                onChange={(e) => {
+                  const next = e.target.value as DocumentType;
+                  setDocumentType(next);
+                  setDniError(null);
+                  if (next === "dni") {
+                    setDni((d) => d.replace(/\D/g, "").slice(0, 8));
+                  }
+                }}
+              >
+                {DOCUMENT_TYPES.map((t) => (
+                  <option key={t} value={t}>
+                    {DOCUMENT_TYPE_LABELS[t]}
+                  </option>
+                ))}
+              </select>
+              <input
+                className="min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                placeholder={
+                  documentType === "dni"
+                    ? "8 dígitos"
+                    : "Número de documento (4–32 caracteres)"
+                }
+                value={dni}
+                onChange={(e) => {
+                  if (documentType === "dni") {
+                    const soloDigitos = e.target.value
+                      .replace(/\D/g, "")
+                      .slice(0, 8);
+                    setDni(soloDigitos);
+                  } else {
+                    setDni(e.target.value.slice(0, 32));
+                  }
+                }}
+                inputMode={documentType === "dni" ? "numeric" : "text"}
+                maxLength={documentType === "dni" ? 8 : 32}
+              />
+              <button
+                type="button"
+                onClick={handleBuscarDni}
+                disabled={lookingUpDni || documentType !== "dni"}
+                title={
+                  documentType !== "dni"
+                    ? "La consulta RENIEC solo aplica a DNI"
+                    : undefined
+                }
+                className="whitespace-nowrap rounded bg-slate-900 px-3 py-2 text-xs font-medium text-white disabled:opacity-50"
+              >
+                {lookingUpDni ? "Buscando..." : "Buscar RENIEC"}
+              </button>
+            </div>
           </div>
           {(dniError || formErrors.dni) && (
             <p className="text-xs text-red-600">{dniError || formErrors.dni}</p>
@@ -472,6 +527,7 @@ export default function PatientsPage() {
                 onClick={() => {
                   setEditingId(null);
                   setFullName("");
+                  setDocumentType("dni");
                   setDni("");
                   setPhone("");
                   setAddress("");
@@ -549,18 +605,14 @@ export default function PatientsPage() {
             </div>
             <div className="flex items-center gap-2">
               <span className="text-[11px] text-slate-600 whitespace-nowrap">
-                Buscar DNI
+                Buscar documento
               </span>
               <input
-                className="w-full rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs sm:w-32"
-                placeholder="DNI"
+                className="w-full rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs sm:w-36"
+                placeholder="Número"
                 value={searchDni}
-                onChange={(e) => {
-                  const soloDigitos = e.target.value.replace(/\D/g, "").slice(0, 8);
-                  setSearchDni(soloDigitos);
-                }}
-                inputMode="numeric"
-                maxLength={8}
+                onChange={(e) => setSearchDni(e.target.value)}
+                maxLength={32}
               />
             </div>
           </div>
@@ -573,7 +625,9 @@ export default function PatientsPage() {
               <thead>
                 <tr className="bg-slate-50 text-left">
                   <th className="border-b border-slate-200 px-2 py-1">Nombre</th>
-                  <th className="border-b border-slate-200 px-2 py-1">DNI</th>
+                  <th className="border-b border-slate-200 px-2 py-1">
+                    Documento
+                  </th>
                   <th className="border-b border-slate-200 px-2 py-1">Teléfono</th>
                   <th className="border-b border-slate-200 px-2 py-1">Edad</th>
                   <th className="border-b border-slate-200 px-2 py-1 text-right">
@@ -590,7 +644,7 @@ export default function PatientsPage() {
                         {p.fullName}
                       </td>
                       <td className="border-b border-slate-100 px-3 py-2 text-xs text-slate-700">
-                        {p.dni}
+                        {formatPatientDocument(p)}
                       </td>
                       <td className="border-b border-slate-100 px-3 py-2 text-xs text-slate-700">
                         {p.phone}

@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { Patient } from "@prisma/client";
 
+import { formatPatientDocument } from "@/lib/patient-document";
+
 export default function MensajeriaPage() {
   const [patients, setPatients] = useState<Patient[]>([]);
   const [messageByPatient, setMessageByPatient] = useState<Record<string, string>>(
@@ -25,7 +27,10 @@ export default function MensajeriaPage() {
     const matchesName = searchName
       ? p.fullName.toLowerCase().includes(searchName.toLowerCase())
       : true;
-    const matchesDni = searchDni ? p.dni.includes(searchDni) : true;
+    const matchesDni = searchDni
+      ? formatPatientDocument(p).toLowerCase().includes(searchDni.toLowerCase()) ||
+        p.dni.toLowerCase().includes(searchDni.toLowerCase())
+      : true;
     return matchesName && matchesDni;
   });
 
@@ -93,18 +98,14 @@ export default function MensajeriaPage() {
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-[11px] text-slate-600 whitespace-nowrap">
-                  Buscar DNI
+                  Buscar documento
                 </span>
                 <input
-                  className="w-full rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs sm:w-32"
-                  placeholder="DNI"
+                  className="w-full rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs sm:w-36"
+                  placeholder="Número"
                   value={searchDni}
-                  onChange={(e) => {
-                    const soloDigitos = e.target.value.replace(/\D/g, "").slice(0, 8);
-                    setSearchDni(soloDigitos);
-                  }}
-                  inputMode="numeric"
-                  maxLength={8}
+                  onChange={(e) => setSearchDni(e.target.value)}
+                  maxLength={32}
                 />
               </div>
             </div>
@@ -114,7 +115,9 @@ export default function MensajeriaPage() {
               <thead>
                 <tr className="bg-slate-50 text-left">
                   <th className="border-b border-slate-200 px-2 py-1">Nombre</th>
-                  <th className="border-b border-slate-200 px-2 py-1">DNI</th>
+                  <th className="border-b border-slate-200 px-2 py-1">
+                    Documento
+                  </th>
                   <th className="border-b border-slate-200 px-2 py-1">Celular</th>
                   <th className="border-b border-slate-200 px-2 py-1">
                     Tel. Emergencia
@@ -135,7 +138,7 @@ export default function MensajeriaPage() {
                       {p.fullName}
                     </td>
                     <td className="border-b border-slate-100 px-2 py-1">
-                      {p.dni}
+                      {formatPatientDocument(p)}
                     </td>
                     <td className="border-b border-slate-100 px-2 py-1">
                       {p.phone}

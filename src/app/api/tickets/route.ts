@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { formatPatientDocument } from "@/lib/patient-document";
 import { prisma } from "@/lib/prisma";
 import { parseSolesToCents } from "@/lib/money";
 import { Prisma } from "@prisma/client";
@@ -217,7 +218,7 @@ export async function POST(request: NextRequest) {
         dateISO,
         patientId: appt.patientId,
         patientName: appt.patient.fullName,
-        patientDni: appt.patient.dni,
+        patientDni: formatPatientDocument(appt.patient),
         procedureName: appt.type,
         procedureUnitPriceCents,
         paymentEfectivoCents,

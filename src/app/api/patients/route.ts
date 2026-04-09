@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { validatePatientDocument } from "@/lib/patient-document";
 
 export async function GET() {
   const patients = await prisma.patient.findMany({
@@ -11,11 +12,20 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   const body = await request.json();
 
+  const doc = validatePatientDocument(
+    String(body.documentType ?? "dni"),
+    String(body.dni ?? ""),
+  );
+  if (!doc.ok) {
+    return NextResponse.json({ error: doc.error }, { status: 400 });
+  }
+
   try {
     const patient = await prisma.patient.create({
       data: {
         fullName: body.fullName,
-        dni: body.dni,
+        documentType: doc.documentType,
+        dni: doc.number,
         phone: body.phone,
         address: body.address,
         birthDate: new Date(body.birthDate),
@@ -34,9 +44,16 @@ export async function POST(request: NextRequest) {
     // Maneja DNI duplicado (constraint unique en la tabla)
     const code = (error as { code?: unknown } | null)?.code;
     const target = (error as { meta?: { target?: unknown } } | null)?.meta?.target;
-    if (code === "P2002" && Array.isArray(target) && target.includes("dni")) {
+    if (
+      code === "P2002" &&
+      Array.isArray(target) &&
+      (target.includes("dni") || target.includes("documentType"))
+    ) {
       return NextResponse.json(
-        { error: "El paciente con este DNI ya está registrado." },
+        {
+          error:
+            "Ya existe un paciente con este tipo y número de documento.",
+        },
         { status: 409 },
       );
     }
@@ -57,12 +74,21 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ error: "Falta id de paciente" }, { status: 400 });
   }
 
+  const docPut = validatePatientDocument(
+    String(body.documentType ?? "dni"),
+    String(body.dni ?? ""),
+  );
+  if (!docPut.ok) {
+    return NextResponse.json({ error: docPut.error }, { status: 400 });
+  }
+
   try {
     const patient = await prisma.patient.update({
       where: { id },
       data: {
         fullName: body.fullName,
-        dni: body.dni,
+        documentType: docPut.documentType,
+        dni: docPut.number,
         phone: body.phone,
         address: body.address,
         birthDate: new Date(body.birthDate),
@@ -80,9 +106,16 @@ export async function PUT(request: NextRequest) {
   } catch (error: unknown) {
     const code = (error as { code?: unknown } | null)?.code;
     const target = (error as { meta?: { target?: unknown } } | null)?.meta?.target;
-    if (code === "P2002" && Array.isArray(target) && target.includes("dni")) {
+    if (
+      code === "P2002" &&
+      Array.isArray(target) &&
+      (target.includes("dni") || target.includes("documentType"))
+    ) {
       return NextResponse.json(
-        { error: "El paciente con este DNI ya está registrado." },
+        {
+          error:
+            "Ya existe un paciente con este tipo y número de documento.",
+        },
         { status: 409 },
       );
     }
