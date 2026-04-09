@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 
 export async function GET(request: NextRequest) {
@@ -159,6 +160,14 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json(updated);
   } catch (error) {
     console.error("Error actualizando receta", error);
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      if (error.code === "P2025") {
+        return NextResponse.json(
+          { error: "No se encontró la receta (id inválido o ya eliminada)." },
+          { status: 404 },
+        );
+      }
+    }
     return NextResponse.json(
       { error: "No se pudo actualizar la receta." },
       { status: 500 },

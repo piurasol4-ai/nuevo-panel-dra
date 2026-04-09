@@ -212,6 +212,49 @@ function mapBodyToVisitFields(body: Partial<VisitBodyInput>) {
   };
 }
 
+const VISIT_BODY_KEYS: (keyof VisitBodyInput)[] = [
+  "visitDate",
+  "appointmentId",
+  "identificationExtra",
+  "personalHistory",
+  "familyHistory",
+  "consultationReason",
+  "currentIllness",
+  "physicalExam",
+  "diagnostics",
+  "diagnosis",
+  "treatmentPlan",
+  "evolutionNotes",
+  "nursingNotes",
+  "treatmentNotes",
+  "weight",
+  "height",
+  "bodyTemperature",
+  "bloodPressure",
+  "oxygenSaturation",
+  "heartRate",
+  "respiratoryRate",
+  "glucose",
+  "procedureName",
+  "procedureNote",
+  "auxiliaryExams",
+  "medicalRest",
+];
+
+/** Solo campos presentes en el body (p. ej. la UI no envía campos ocultos). */
+function mapBodyToVisitFieldsPartial(
+  body: Partial<VisitBodyInput & { id?: string }>,
+): Partial<Visit> {
+  const out: Partial<Visit> = {};
+  for (const key of VISIT_BODY_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(body, key)) {
+      const v = body[key];
+      (out as Record<string, unknown>)[key] = v ?? null;
+    }
+  }
+  return out;
+}
+
 async function loadHistoryAndVisits(patientId: string) {
   // Buscamos TODAS las filas legacy para consolidarlas en el primer registro.
   const rows = await prisma.clinicalNote.findMany({
@@ -390,12 +433,21 @@ export async function PUT(request: NextRequest) {
       );
     }
 
+    const partial = mapBodyToVisitFieldsPartial(body) as Omit<
+      Visit,
+      "id" | "createdAt"
+    >;
+    const attachmentPatch = Object.prototype.hasOwnProperty.call(
+      body,
+      "attachments",
+    )
+      ? { attachments: normalizeAttachments(body.attachments) }
+      : {};
+
     const updatedVisit: Visit = {
       ...visits[idx],
-      ...(mapBodyToVisitFields(body) as Omit<
-        Visit,
-        "id" | "createdAt"
-      >),
+      ...partial,
+      ...attachmentPatch,
     };
 
     const updatedVisits = visits.map((v) => (v.id === visitId ? updatedVisit : v));

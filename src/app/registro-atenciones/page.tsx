@@ -1,6 +1,14 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import {
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import type { ChangeEvent } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 
@@ -26,7 +34,34 @@ type RecipeLite = {
   workPlan: string | null;
   prescriptionText: string | null;
   appointmentId: string | null;
+  /** Viene del GET /api/recipes (include patient) para WhatsApp */
+  patient?: { fullName: string; phone: string | null };
 };
+
+function recipeFromApiRow(raw: unknown): RecipeLite | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  if (typeof o.id !== "string") return null;
+  let patient: RecipeLite["patient"];
+  const pRaw = o.patient;
+  if (pRaw && typeof pRaw === "object") {
+    const p = pRaw as Record<string, unknown>;
+    patient = {
+      fullName: typeof p.fullName === "string" ? p.fullName : "",
+      phone: p.phone == null || p.phone === "" ? null : String(p.phone),
+    };
+  }
+  return {
+    id: o.id,
+    diagnosis: o.diagnosis == null ? null : String(o.diagnosis),
+    workPlan: o.workPlan == null ? null : String(o.workPlan),
+    prescriptionText:
+      o.prescriptionText == null ? null : String(o.prescriptionText),
+    appointmentId:
+      o.appointmentId == null ? null : String(o.appointmentId),
+    patient,
+  };
+}
 
 function visitToDraft(v: Record<string, unknown>): Record<string, string | null> {
   const keys = [
@@ -34,14 +69,9 @@ function visitToDraft(v: Record<string, unknown>): Record<string, string | null>
     "personalHistory",
     "familyHistory",
     "consultationReason",
-    "currentIllness",
-    "physicalExam",
     "diagnostics",
-    "diagnosis",
     "treatmentPlan",
-    "evolutionNotes",
     "nursingNotes",
-    "treatmentNotes",
     "weight",
     "height",
     "bodyTemperature",
@@ -61,6 +91,34 @@ function visitToDraft(v: Record<string, unknown>): Record<string, string | null>
     out[k] = val == null ? null : String(val);
   }
   return out;
+}
+
+type ClinicalAttachment = {
+  id: string;
+  driveFileId: string;
+  name: string;
+  mimeType: string;
+  webViewLink: string | null;
+  uploadedAt: string;
+};
+
+function isClinicalAttachment(x: unknown): x is ClinicalAttachment {
+  if (!x || typeof x !== "object") return false;
+  const o = x as Record<string, unknown>;
+  return (
+    typeof o.id === "string" &&
+    typeof o.driveFileId === "string" &&
+    typeof o.name === "string" &&
+    typeof o.mimeType === "string" &&
+    (o.webViewLink === null || typeof o.webViewLink === "string") &&
+    typeof o.uploadedAt === "string"
+  );
+}
+
+function attachmentsFromVisit(v: Record<string, unknown>): ClinicalAttachment[] {
+  const raw = v.attachments;
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(isClinicalAttachment);
 }
 
 function RegistroAtencionesPageInner() {
@@ -83,6 +141,10 @@ function RegistroAtencionesPageInner() {
 
   const [recipe, setRecipe] = useState<RecipeLite | null>(null);
   const [recipeLoading, setRecipeLoading] = useState(false);
+
+  const [attachments, setAttachments] = useState<ClinicalAttachment[]>([]);
+  const [uploadingAttachment, setUploadingAttachment] = useState(false);
+  const pendingDriveIdsRef = useRef<Set<string>>(new Set());
 
   const loadList = useCallback(async () => {
     setLoading(true);
@@ -124,6 +186,18 @@ function RegistroAtencionesPageInner() {
     setVisitPatientId(pick.patientId);
   }, [rows, highlightVisitId, highlightPatientId, selectedId]);
 
+  useEffect(() => {
+    if (!selectedId) {
+      setAttachments([]);
+      pendingDriveIdsRef.current.clear();
+      return;
+    }
+    const row = rows.find((r) => r.visitId === selectedId);
+    if (!row) return;
+    setAttachments(attachmentsFromVisit(row.visit));
+    pendingDriveIdsRef.current.clear();
+  }, [selectedId, rows]);
+
   const selectedRow = useMemo(
     () => rows.find((r) => r.visitId === selectedId) ?? null,
     [rows, selectedId],
@@ -141,8 +215,8 @@ function RegistroAtencionesPageInner() {
       .then((r) => r.json())
       .then((data) => {
         const list = Array.isArray(data) ? data : [];
-        const first = list[0] as RecipeLite | undefined;
-        setRecipe(first ?? null);
+        const first = list[0];
+        setRecipe(first ? recipeFromApiRow(first) : null);
       })
       .catch(() => setRecipe(null))
       .finally(() => setRecipeLoading(false));
@@ -174,6 +248,61 @@ function RegistroAtencionesPageInner() {
     setDraft((prev) => ({ ...prev, [key]: value || null }));
   }
 
+  async function handleRemoveAttachment(att: ClinicalAttachment) {
+    setAttachments((prev) => prev.filter((a) => a.id !== att.id));
+    if (pendingDriveIdsRef.current.has(att.driveFileId)) {
+      pendingDriveIdsRef.current.delete(att.driveFileId);
+      try {
+        await fetch(
+          `/api/clinical-notes/attachments?driveFileId=${encodeURIComponent(
+            att.driveFileId,
+          )}`,
+          { method: "DELETE" },
+        );
+      } catch (e) {
+        console.error(e);
+      }
+    }
+  }
+
+  async function handleAuxiliaryExamFileChange(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || !visitPatientId || !selectedId) return;
+
+    setUploadingAttachment(true);
+    setSaveMsg(null);
+    try {
+      const fd = new FormData();
+      fd.set("patientId", visitPatientId);
+      fd.set("visitId", selectedId);
+      fd.set("file", file);
+      const res = await fetch("/api/clinical-notes/attachments/upload", {
+        method: "POST",
+        body: fd,
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setSaveMsg(
+          (data as { error?: string })?.error ?? "No se pudo subir el archivo.",
+        );
+        return;
+      }
+      const att = (data as { attachment?: ClinicalAttachment }).attachment;
+      if (!att) {
+        setSaveMsg("Respuesta inválida al subir el archivo.");
+        return;
+      }
+      pendingDriveIdsRef.current.add(att.driveFileId);
+      setAttachments((prev) => [...prev, att]);
+    } catch (err) {
+      console.error(err);
+      setSaveMsg("No se pudo subir el archivo.");
+    } finally {
+      setUploadingAttachment(false);
+    }
+  }
+
   async function saveVisit() {
     if (!selectedId || !visitPatientId) return;
     setSaving(true);
@@ -189,14 +318,9 @@ function RegistroAtencionesPageInner() {
           personalHistory: draft.personalHistory,
           familyHistory: draft.familyHistory,
           consultationReason: draft.consultationReason,
-          currentIllness: draft.currentIllness,
-          physicalExam: draft.physicalExam,
           diagnostics: draft.diagnostics,
-          diagnosis: draft.diagnosis,
           treatmentPlan: draft.treatmentPlan,
-          evolutionNotes: draft.evolutionNotes,
           nursingNotes: draft.nursingNotes,
-          treatmentNotes: draft.treatmentNotes,
           weight: draft.weight,
           height: draft.height,
           bodyTemperature: draft.bodyTemperature,
@@ -209,6 +333,7 @@ function RegistroAtencionesPageInner() {
           procedureNote: draft.procedureNote,
           auxiliaryExams: draft.auxiliaryExams,
           medicalRest: draft.medicalRest,
+          attachments,
         }),
       });
       const payload = await res.json().catch(() => null);
@@ -221,6 +346,11 @@ function RegistroAtencionesPageInner() {
         return;
       }
       setSaveMsg("Cambios guardados.");
+      const saved = payload as { attachments?: ClinicalAttachment[] };
+      if (Array.isArray(saved.attachments)) {
+        setAttachments(saved.attachments);
+        pendingDriveIdsRef.current.clear();
+      }
       await loadList();
     } finally {
       setSaving(false);
@@ -230,6 +360,10 @@ function RegistroAtencionesPageInner() {
   async function saveRecipe() {
     if (!selectedRow || !visitPatientId || !recipe) {
       setSaveMsg("No hay receta para guardar o falta cita vinculada.");
+      return;
+    }
+    if (!recipe.id?.trim()) {
+      setSaveMsg("La receta no tiene identificador. Vuelve a crearla o recarga la página.");
       return;
     }
     setSaving(true);
@@ -245,19 +379,63 @@ function RegistroAtencionesPageInner() {
           prescriptionText: recipe.prescriptionText,
         }),
       });
+      const payload = await res.json().catch(() => null);
       if (!res.ok) {
-        const j = (await res.json().catch(() => null)) as { error?: string } | null;
+        const j = payload as { error?: string } | null;
         setSaveMsg(j?.error ?? "No se pudo guardar la receta.");
         return;
       }
       setSaveMsg("Receta guardada.");
+      const parsed = payload ? recipeFromApiRow(payload) : null;
+      if (parsed) {
+        setRecipe((prev) =>
+          prev
+            ? {
+                ...prev,
+                ...parsed,
+                patient: parsed.patient ?? prev.patient,
+              }
+            : parsed,
+        );
+      }
     } finally {
       setSaving(false);
     }
   }
 
+  function sendRecipeWhatsapp() {
+    if (typeof window === "undefined") return;
+    if (!recipe || !selectedRow) return;
+
+    const receta = (recipe.prescriptionText ?? "").trim();
+    if (!receta) {
+      alert("La receta está vacía.");
+      return;
+    }
+
+    const fullName =
+      recipe.patient?.fullName?.trim() || selectedRow.patientName;
+    const phoneDigits = String(recipe.patient?.phone ?? "").replace(/\D/g, "");
+    if (!phoneDigits) {
+      alert(
+        "El paciente no tiene un número de WhatsApp/teléfono registrado. Actualízalo en la ficha del paciente.",
+      );
+      return;
+    }
+
+    const waNumber = phoneDigits.startsWith("51")
+      ? phoneDigits
+      : `51${phoneDigits}`;
+
+    const texto = `Receta: ${receta}`;
+    const fullMessage = `Hamonia CenterH., Buen día: Sr(a) ${fullName} le hacemos saber que: ${texto}`;
+
+    const url = `https://wa.me/${waNumber}?text=${encodeURIComponent(fullMessage)}`;
+    window.open(url, "_blank");
+  }
+
   async function createRecipeForVisit() {
-    if (!selectedRow || !visitPatientId) return;
+    if (!selectedRow || !visitPatientId || !selectedRow.appointmentId) return;
     setSaving(true);
     setSaveMsg(null);
     try {
@@ -267,7 +445,7 @@ function RegistroAtencionesPageInner() {
         body: JSON.stringify({
           patientId: visitPatientId,
           appointmentId: selectedRow.appointmentId,
-          diagnosis: draft.diagnosis ?? "",
+          diagnosis: "",
           workPlan: draft.treatmentPlan ?? null,
           prescriptionText: "",
         }),
@@ -281,7 +459,17 @@ function RegistroAtencionesPageInner() {
         );
         return;
       }
-      setRecipe(data as RecipeLite);
+      const refRes = await fetch(
+        `/api/recipes?appointmentId=${encodeURIComponent(selectedRow.appointmentId)}`,
+      );
+      const list = await refRes.json().catch(() => []);
+      const first = Array.isArray(list) ? list[0] : null;
+      const next =
+        (first ? recipeFromApiRow(first) : null) ?? recipeFromApiRow(data);
+      if (next) setRecipe(next);
+      else if (data && typeof data === "object" && "id" in data) {
+        setRecipe(data as RecipeLite);
+      }
       setSaveMsg("Receta creada. Completa el texto y guarda.");
     } finally {
       setSaving(false);
@@ -442,18 +630,13 @@ function RegistroAtencionesPageInner() {
               {tab === "atencion" && (
                 <div className="space-y-3">
                   <p className="text-xs text-slate-500">
-                    Motivo, examen, diagnóstico y signos. Se guarda en la misma ficha
+                    Motivo de consulta y signos vitales. Se guarda en la misma ficha
                     que en Historias clínicas.
                   </p>
                   {(
                     [
                       ["consultationReason", "Motivo de consulta"],
-                      ["currentIllness", "Enfermedad actual"],
-                      ["physicalExam", "Examen físico"],
-                      ["diagnosis", "Diagnóstico"],
-                      ["evolutionNotes", "Evolución / observaciones"],
                       ["nursingNotes", "Notas de enfermería"],
-                      ["treatmentNotes", "Notas de tratamiento"],
                     ] as const
                   ).map(([key, label]) => (
                     <label key={key} className="block text-xs">
@@ -578,31 +761,111 @@ function RegistroAtencionesPageInner() {
                           }
                         />
                       </label>
-                      <button
-                        type="button"
-                        onClick={() => void saveRecipe()}
-                        disabled={saving}
-                        className="rounded bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
-                      >
-                        Guardar receta
-                      </button>
+                      <div className="flex flex-wrap items-center gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => void saveRecipe()}
+                          disabled={saving}
+                          className="rounded bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                        >
+                          Guardar receta
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => sendRecipeWhatsapp()}
+                          disabled={saving}
+                          className="rounded bg-[#25D366] px-4 py-2 text-sm font-semibold text-white hover:bg-[#20bd5a] disabled:opacity-50"
+                        >
+                          Enviar por WhatsApp
+                        </button>
+                      </div>
                     </>
                   )}
                 </div>
               )}
 
               {tab === "examenes" && (
-                <label className="block text-xs">
-                  <span className="font-medium text-slate-700">
-                    Exámenes auxiliares solicitados / resultados
-                  </span>
-                  <textarea
-                    className="mt-1 min-h-[180px] w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                    value={draft.auxiliaryExams ?? ""}
-                    onChange={(e) => setField("auxiliaryExams", e.target.value)}
-                    placeholder="Laboratorio, imagen, etc."
-                  />
-                </label>
+                <div className="space-y-4">
+                  <label className="block text-xs">
+                    <span className="font-medium text-slate-700">
+                      Exámenes auxiliares solicitados / resultados
+                    </span>
+                    <textarea
+                      className="mt-1 min-h-[140px] w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                      value={draft.auxiliaryExams ?? ""}
+                      onChange={(e) =>
+                        setField("auxiliaryExams", e.target.value)
+                      }
+                      placeholder="Laboratorio, imagen, etc."
+                    />
+                  </label>
+
+                  <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50/80 p-3">
+                    <p className="text-xs font-semibold text-slate-700">
+                      Documento del paciente (PDF o foto)
+                    </p>
+                    <p className="text-[11px] text-slate-500">
+                      Máx. 15 MB. Se sube a Google Drive; en la ficha solo se
+                      guarda el enlace. Pulsa &quot;Guardar ficha&quot; para
+                      persistir la lista de archivos.
+                    </p>
+                    <input
+                      type="file"
+                      accept="application/pdf,image/jpeg,image/png,image/gif,image/webp"
+                      disabled={
+                        uploadingAttachment || saving || !selectedId || !visitPatientId
+                      }
+                      onChange={(e) => {
+                        void handleAuxiliaryExamFileChange(e);
+                      }}
+                      className="block w-full text-xs file:mr-2 file:rounded file:border-0 file:bg-amber-100 file:px-2 file:py-1 file:text-[11px] file:font-semibold"
+                    />
+                    {uploadingAttachment && (
+                      <p className="text-[11px] text-slate-500">
+                        Subiendo a Drive…
+                      </p>
+                    )}
+                    {attachments.length > 0 && (
+                      <ul className="space-y-1">
+                        {attachments.map((a) => (
+                          <li
+                            key={a.id}
+                            className="flex flex-wrap items-center justify-between gap-2 rounded border border-slate-200 bg-white px-2 py-1 text-[11px]"
+                          >
+                            <span className="font-medium text-slate-800">
+                              {a.name}
+                            </span>
+                            <span className="flex items-center gap-2">
+                              {a.webViewLink ? (
+                                <a
+                                  href={a.webViewLink}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-amber-700 underline"
+                                >
+                                  Abrir en Drive
+                                </a>
+                              ) : (
+                                <span className="text-slate-400">
+                                  (sin enlace)
+                                </span>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  void handleRemoveAttachment(a);
+                                }}
+                                className="rounded border border-red-200 bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold text-red-700 hover:bg-red-100"
+                              >
+                                Quitar
+                              </button>
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </div>
               )}
 
               {tab === "descanso" && (
@@ -629,9 +892,12 @@ function RegistroAtencionesPageInner() {
                   >
                     {saving ? "Guardando…" : "Guardar ficha"}
                   </button>
-                  {saveMsg && (
-                    <span className="text-xs text-slate-600">{saveMsg}</span>
-                  )}
+                </div>
+              )}
+
+              {saveMsg && (
+                <div className="mt-4 border-t border-slate-100 pt-3">
+                  <p className="text-xs text-slate-600">{saveMsg}</p>
                 </div>
               )}
             </div>
