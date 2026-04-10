@@ -4,6 +4,10 @@ import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import type { Patient } from "@prisma/client";
 import { useSearchParams } from "next/navigation";
 
+import {
+  clinicalAttachmentSizeErrorMessage,
+  isClinicalAttachmentOverLimit,
+} from "@/lib/clinical-attachment-limits";
 import { formatPatientDocument } from "@/lib/patient-document";
 
 // Evita el prerender estático en build (Railway/Next),
@@ -562,6 +566,11 @@ function HistoriasClinicasPageInner() {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file || !selectedPatientId || !editingNoteId) return;
+
+    if (isClinicalAttachmentOverLimit(file.size)) {
+      setError(clinicalAttachmentSizeErrorMessage(file.size));
+      return;
+    }
 
     setUploadingAttachment(true);
     setError(null);

@@ -12,6 +12,11 @@ import type { ChangeEvent } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 
+import {
+  clinicalAttachmentSizeErrorMessage,
+  isClinicalAttachmentOverLimit,
+} from "@/lib/clinical-attachment-limits";
+
 type RegistroRow = {
   visitId: string;
   patientId: string;
@@ -280,6 +285,12 @@ function RegistroAtencionesPageInner() {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file || !visitPatientId || !selectedId) return;
+
+    if (isClinicalAttachmentOverLimit(file.size)) {
+      setSaveMsg(null);
+      setUploadMsg(clinicalAttachmentSizeErrorMessage(file.size));
+      return;
+    }
 
     setUploadingAttachment(true);
     setSaveMsg(null);

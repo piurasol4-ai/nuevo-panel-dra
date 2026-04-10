@@ -3,11 +3,15 @@ import crypto from "crypto";
 import { Readable } from "stream";
 import busboy from "busboy";
 import { SESSION_COOKIE_NAME, verifySession } from "@/lib/auth";
+import {
+  CLINICAL_ATTACHMENT_MAX_BYTES,
+  clinicalAttachmentSizeErrorMessage,
+} from "@/lib/clinical-attachment-limits";
 import { uploadBufferToCloudinary } from "@/lib/cloudinary";
 
 export const runtime = "nodejs";
 
-const MAX_BYTES = 15 * 1024 * 1024; // 15 MB
+const MAX_BYTES = CLINICAL_ATTACHMENT_MAX_BYTES;
 
 const ALLOWED_MIME = new Set([
   "application/pdf",
@@ -169,7 +173,7 @@ export async function POST(request: NextRequest) {
     }
     if (code === "file_too_large") {
       return NextResponse.json(
-        { error: "El archivo supera el límite de 15 MB." },
+        { error: clinicalAttachmentSizeErrorMessage() },
         { status: 400 },
       );
     }
@@ -192,7 +196,7 @@ export async function POST(request: NextRequest) {
 
   if (buf.length > MAX_BYTES) {
     return NextResponse.json(
-      { error: "El archivo supera el límite de 15 MB." },
+      { error: clinicalAttachmentSizeErrorMessage(buf.length) },
       { status: 400 },
     );
   }
