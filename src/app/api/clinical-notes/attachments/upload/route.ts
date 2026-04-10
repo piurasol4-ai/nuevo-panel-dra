@@ -81,6 +81,9 @@ export async function POST(request: NextRequest) {
       fileName: remoteName,
       mimeType,
     });
+    if (!uploaded.secureUrl) {
+      throw new Error("Cloudinary no devolvió secure_url.");
+    }
 
     const attachment = {
       id: crypto.randomUUID(),

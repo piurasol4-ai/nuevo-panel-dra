@@ -144,6 +144,7 @@ function RegistroAtencionesPageInner() {
 
   const [attachments, setAttachments] = useState<ClinicalAttachment[]>([]);
   const [uploadingAttachment, setUploadingAttachment] = useState(false);
+  const [uploadMsg, setUploadMsg] = useState<string | null>(null);
   const pendingDriveIdsRef = useRef<Set<string>>(new Set());
 
   const loadList = useCallback(async () => {
@@ -282,6 +283,7 @@ function RegistroAtencionesPageInner() {
 
     setUploadingAttachment(true);
     setSaveMsg(null);
+    setUploadMsg("Subiendo archivo...");
     try {
       const fd = new FormData();
       fd.set("patientId", visitPatientId);
@@ -293,21 +295,22 @@ function RegistroAtencionesPageInner() {
       });
       const data = await res.json();
       if (!res.ok) {
-        setSaveMsg(
+        setUploadMsg(
           (data as { error?: string })?.error ?? "No se pudo subir el archivo.",
         );
         return;
       }
       const att = (data as { attachment?: ClinicalAttachment }).attachment;
       if (!att) {
-        setSaveMsg("Respuesta inválida al subir el archivo.");
+        setUploadMsg("Respuesta inválida al subir el archivo.");
         return;
       }
       pendingDriveIdsRef.current.add(att.driveFileId);
       setAttachments((prev) => [...prev, att]);
+      setUploadMsg(`Archivo subido: ${att.name}`);
     } catch (err) {
       console.error(err);
-      setSaveMsg("No se pudo subir el archivo.");
+      setUploadMsg("No se pudo subir el archivo.");
     } finally {
       setUploadingAttachment(false);
     }
@@ -833,6 +836,14 @@ function RegistroAtencionesPageInner() {
                     {uploadingAttachment && (
                       <p className="text-[11px] text-slate-500">
                         Subiendo archivo…
+                      </p>
+                    )}
+                    {uploadMsg && (
+                      <p className="text-[11px] text-slate-600">{uploadMsg}</p>
+                    )}
+                    {attachments.length === 0 && !uploadingAttachment && (
+                      <p className="text-[11px] text-slate-400">
+                        Aún no hay archivos adjuntos.
                       </p>
                     )}
                     {attachments.length > 0 && (
