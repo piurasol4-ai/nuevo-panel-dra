@@ -1041,11 +1041,22 @@ function HistoriasClinicasPageInner() {
                         {attachments.map((a) => (
                           <li
                             key={a.id}
-                            className="flex flex-wrap items-center justify-between gap-2 rounded border border-slate-200 bg-white px-2 py-1 text-[11px]"
+                            className="flex flex-wrap items-start justify-between gap-2 rounded border border-slate-200 bg-white px-2 py-1 text-[11px]"
                           >
-                            <span className="font-medium text-slate-800">
-                              {a.name}
-                            </span>
+                            <div className="min-w-0">
+                              <p className="font-medium text-slate-800">{a.name}</p>
+                              {a.webViewLink && (
+                                <a
+                                  href={a.webViewLink}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="block max-w-[320px] truncate text-[10px] text-slate-500 underline"
+                                  title={a.webViewLink}
+                                >
+                                  {a.webViewLink}
+                                </a>
+                              )}
+                            </div>
                             <span className="flex items-center gap-2">
                               {a.webViewLink ? (
                                 <a
@@ -1371,17 +1382,17 @@ function HistoriasClinicasPageInner() {
                     <ul className="mt-1 list-inside list-disc space-y-0.5 text-[11px] text-amber-900">
                       {n.attachments.map((a) => (
                         <li key={a.id}>
-                          {a.webViewLink ? (
+                          <span className="font-medium text-slate-800">{a.name}</span>
+                          {a.webViewLink && (
                             <a
                               href={a.webViewLink}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="underline"
+                              className="ml-2 inline-block max-w-[420px] truncate align-bottom underline"
+                              title={a.webViewLink}
                             >
-                              {a.name}
+                              {a.webViewLink}
                             </a>
-                          ) : (
-                            <span>{a.name}</span>
                           )}
                         </li>
                       ))}
