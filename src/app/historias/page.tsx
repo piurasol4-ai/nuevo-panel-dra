@@ -284,7 +284,7 @@ function buildHistoriaClinicaHtml(
 
     ${
       note.attachments && note.attachments.length > 0
-        ? `<h2>Archivos adjuntos (Google Drive)</h2><div class="section-box"><ul style="margin:0;padding-left:18px;">${note.attachments
+        ? `<h2>Archivos adjuntos</h2><div class="section-box"><ul style="margin:0;padding-left:18px;">${note.attachments
             .map((a) => {
               const label = escapeHtml(a.name);
               if (a.webViewLink) {
@@ -344,7 +344,7 @@ function HistoriasClinicasPageInner() {
   );
   const [attachments, setAttachments] = useState<ClinicalAttachment[]>([]);
   const [uploadingAttachment, setUploadingAttachment] = useState(false);
-  /** Subidas a Drive aún no guardadas en la ficha (para borrar en Drive si se quitan antes de guardar). */
+  /** Subidas temporales aún no guardadas en la ficha. */
   const pendingDriveIdsRef = useRef<Set<string>>(new Set());
 
   const selectedPatient = useMemo(
@@ -1011,11 +1011,11 @@ function HistoriasClinicasPageInner() {
 
               <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50/80 p-3">
                 <label className="text-xs font-semibold text-slate-700">
-                  Archivos adjuntos (Google Drive)
+                  Archivos adjuntos
                 </label>
                 <p className="text-[11px] text-slate-500">
-                  PDF o imagen (máx. 15 MB). El archivo se sube a tu carpeta de
-                  Drive; aquí solo guardamos el enlace.
+                  PDF o imagen (máx. 15 MB). El archivo se sube al almacenamiento
+                  configurado; aquí solo guardamos el enlace.
                 </p>
                 {!editingNoteId ? (
                   <p className="text-xs text-amber-800">
@@ -1033,7 +1033,7 @@ function HistoriasClinicasPageInner() {
                     />
                     {uploadingAttachment && (
                       <p className="text-[11px] text-slate-500">
-                        Subiendo a Drive…
+                        Subiendo archivo…
                       </p>
                     )}
                     {attachments.length > 0 && (
@@ -1054,7 +1054,7 @@ function HistoriasClinicasPageInner() {
                                   rel="noopener noreferrer"
                                   className="text-amber-700 underline"
                                 >
-                                  Abrir en Drive
+                                  Abrir archivo
                                 </a>
                               ) : (
                                 <span className="text-slate-400">
@@ -1366,7 +1366,7 @@ function HistoriasClinicasPageInner() {
                 {n.attachments && n.attachments.length > 0 && (
                   <div className="mt-2 border-t border-slate-200 pt-2">
                     <p className="font-semibold text-slate-800">
-                      Archivos adjuntos (Drive)
+                      Archivos adjuntos
                     </p>
                     <ul className="mt-1 list-inside list-disc space-y-0.5 text-[11px] text-amber-900">
                       {n.attachments.map((a) => (

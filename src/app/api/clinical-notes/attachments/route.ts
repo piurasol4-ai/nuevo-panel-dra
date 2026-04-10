@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { SESSION_COOKIE_NAME, verifySession } from "@/lib/auth";
-import { deleteDriveFile } from "@/lib/google-drive";
+import { deleteCloudinaryAsset } from "@/lib/cloudinary";
 
 /**
- * Quita un archivo de Google Drive (p. ej. el usuario subió y lo eliminó antes de guardar la ficha).
+ * Quita un archivo de Cloudinary (p. ej. el usuario subió y lo eliminó antes de guardar la ficha).
  * Requiere sesión; uso interno del panel.
  */
 export async function DELETE(request: NextRequest) {
@@ -25,12 +25,12 @@ export async function DELETE(request: NextRequest) {
   }
 
   try {
-    await deleteDriveFile(driveFileId);
+    await deleteCloudinaryAsset(driveFileId);
     return NextResponse.json({ ok: true });
   } catch (err) {
-    console.error("Drive delete error:", err);
+    console.error("Cloudinary delete error:", err);
     return NextResponse.json(
-      { error: "No se pudo eliminar el archivo en Drive." },
+      { error: "No se pudo eliminar el archivo." },
       { status: 500 },
     );
   }

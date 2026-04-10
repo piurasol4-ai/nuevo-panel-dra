@@ -805,7 +805,7 @@ function RegistroAtencionesPageInner() {
                       Documento del paciente (PDF o foto)
                     </p>
                     <p className="text-[11px] text-slate-500">
-                      Máx. 15 MB. Se sube a Google Drive; en la ficha solo se
+                      Máx. 15 MB. Se sube a Cloudinary; en la ficha solo se
                       guarda el enlace. Pulsa &quot;Guardar ficha&quot; para
                       persistir la lista de archivos.
                     </p>
@@ -822,7 +822,7 @@ function RegistroAtencionesPageInner() {
                     />
                     {uploadingAttachment && (
                       <p className="text-[11px] text-slate-500">
-                        Subiendo a Drive…
+                        Subiendo archivo…
                       </p>
                     )}
                     {attachments.length > 0 && (
@@ -830,11 +830,22 @@ function RegistroAtencionesPageInner() {
                         {attachments.map((a) => (
                           <li
                             key={a.id}
-                            className="flex flex-wrap items-center justify-between gap-2 rounded border border-slate-200 bg-white px-2 py-1 text-[11px]"
+                            className="flex flex-wrap items-start justify-between gap-2 rounded border border-slate-200 bg-white px-2 py-1 text-[11px]"
                           >
-                            <span className="font-medium text-slate-800">
-                              {a.name}
-                            </span>
+                            <div className="min-w-0">
+                              <p className="font-medium text-slate-800">{a.name}</p>
+                              {a.webViewLink && (
+                                <a
+                                  href={a.webViewLink}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="block max-w-[320px] truncate text-[10px] text-slate-500 underline"
+                                  title={a.webViewLink}
+                                >
+                                  {a.webViewLink}
+                                </a>
+                              )}
+                            </div>
                             <span className="flex items-center gap-2">
                               {a.webViewLink ? (
                                 <a
@@ -843,7 +854,7 @@ function RegistroAtencionesPageInner() {
                                   rel="noopener noreferrer"
                                   className="text-amber-700 underline"
                                 >
-                                  Abrir en Drive
+                                  Abrir archivo
                                 </a>
                               ) : (
                                 <span className="text-slate-400">

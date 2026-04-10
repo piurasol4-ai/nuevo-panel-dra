@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import crypto from "crypto";
-import { deleteDriveFile } from "@/lib/google-drive";
+import { deleteCloudinaryAsset } from "@/lib/cloudinary";
 
 export type ClinicalAttachment = {
   id: string;
@@ -43,7 +43,7 @@ type Visit = {
   procedureNote: string | null;
   auxiliaryExams: string | null;
   medicalRest: string | null;
-  /** Archivos en Google Drive (solo metadatos en BD) */
+  /** Archivos adjuntos (solo metadatos en BD) */
   attachments?: ClinicalAttachment[];
 };
 
@@ -134,9 +134,9 @@ function normalizeAttachments(input: unknown): ClinicalAttachment[] {
 
 async function deleteDriveFileSafe(fileId: string) {
   try {
-    await deleteDriveFile(fileId);
+    await deleteCloudinaryAsset(fileId);
   } catch (e) {
-    console.error("deleteDriveFileSafe:", fileId, e);
+    console.error("deleteCloudinaryAssetSafe:", fileId, e);
   }
 }
 

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 import { SESSION_COOKIE_NAME, verifySession } from "@/lib/auth";
-import { uploadFileToDrive } from "@/lib/google-drive";
+import { uploadBufferToCloudinary } from "@/lib/cloudinary";
 
 const MAX_BYTES = 15 * 1024 * 1024; // 15 MB
 
@@ -76,7 +76,7 @@ export async function POST(request: NextRequest) {
   const remoteName = `${patientId.slice(0, 8)}_${visitId.slice(0, 8)}_${stamp}_${original}`;
 
   try {
-    const uploaded = await uploadFileToDrive({
+    const uploaded = await uploadBufferToCloudinary({
       buffer: buf,
       fileName: remoteName,
       mimeType,
@@ -84,20 +84,20 @@ export async function POST(request: NextRequest) {
 
     const attachment = {
       id: crypto.randomUUID(),
-      driveFileId: uploaded.id,
+      driveFileId: uploaded.publicId,
       name: original,
-      mimeType: uploaded.mimeType ?? mimeType,
-      webViewLink: uploaded.webViewLink,
+      mimeType,
+      webViewLink: uploaded.secureUrl,
       uploadedAt: new Date().toISOString(),
     };
 
     return NextResponse.json({ attachment });
   } catch (err) {
-    console.error("Drive upload error:", err);
+    console.error("Cloudinary upload error:", err);
     const msg =
-      err instanceof Error && err.message.includes("GOOGLE_")
-        ? "Drive no está configurado en el servidor (variables de entorno)."
-        : "No se pudo subir el archivo a Google Drive.";
+      err instanceof Error && err.message.includes("CLOUDINARY_")
+        ? "Cloudinary no está configurado en el servidor (variables de entorno)."
+        : "No se pudo subir el archivo.";
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
