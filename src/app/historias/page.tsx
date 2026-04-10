@@ -546,6 +546,16 @@ function HistoriasClinicasPageInner() {
     }
   }
 
+  async function handleCopyAttachmentLink(link: string | null) {
+    if (!link) return;
+    try {
+      await navigator.clipboard.writeText(link);
+      setError("Enlace copiado al portapapeles.");
+    } catch {
+      setError("No se pudo copiar el enlace.");
+    }
+  }
+
   async function handleAttachmentFileChange(
     e: React.ChangeEvent<HTMLInputElement>,
   ) {
@@ -1072,6 +1082,16 @@ function HistoriasClinicasPageInner() {
                                   (sin enlace)
                                 </span>
                               )}
+                              <button
+                                type="button"
+                                disabled={!a.webViewLink}
+                                onClick={() => {
+                                  void handleCopyAttachmentLink(a.webViewLink);
+                                }}
+                                className="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                Copiar link
+                              </button>
                               <button
                                 type="button"
                                 onClick={() => {
