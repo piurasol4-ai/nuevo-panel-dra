@@ -72,6 +72,13 @@ export default function SidebarShell({
             Pacientes
           </a>
           <a
+            href="/estudio-redes"
+            className="block px-2 py-1 rounded hover:bg-slate-800"
+            onClick={handleNav}
+          >
+            Estudio de redes
+          </a>
+          <a
             href="/agenda"
             className="block px-2 py-1 rounded hover:bg-slate-800"
             onClick={handleNav}
@@ -225,6 +232,13 @@ export default function SidebarShell({
                 onClick={handleNav}
               >
                 Pacientes
+              </a>
+              <a
+                href="/estudio-redes"
+                className="block px-2 py-1 rounded hover:bg-slate-800"
+                onClick={handleNav}
+              >
+                Estudio de redes
               </a>
               <a
                 href="/agenda"

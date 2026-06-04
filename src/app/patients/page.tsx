@@ -17,6 +17,7 @@ import {
   normalizeDocumentType,
   validatePatientDocument,
 } from "@/lib/patient-document";
+import { REFERRAL_SOURCE_OPTIONS } from "@/lib/referral-sources";
 
 registerLocale("es", es);
 
@@ -456,16 +457,11 @@ export default function PatientsPage() {
               onChange={(e) => setReferralSource(e.target.value)}
             >
               <option value="">Seleccionar origen…</option>
-              <option value="Recomendación">Recomendación</option>
-              <option value="Facebook">Facebook</option>
-              <option value="YouTube">YouTube</option>
-              <option value="WhatsApp">WhatsApp</option>
-              <option value="Instagram">Instagram</option>
-              <option value="TikTok">TikTok</option>
-              <option value="LinkedIn">LinkedIn</option>
-              <option value="X">X</option>
-              <option value="Snapchat">Snapchat</option>
-              <option value="Pinterest">Pinterest</option>
+              {REFERRAL_SOURCE_OPTIONS.map((opt) => (
+                <option key={opt} value={opt}>
+                  {opt}
+                </option>
+              ))}
             </select>
           </div>
 
