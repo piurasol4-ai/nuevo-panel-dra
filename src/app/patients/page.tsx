@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, FormEvent } from "react";
+import { useEffect, useMemo, useState, FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { Patient } from "@prisma/client";
 import DatePicker from "react-datepicker";
@@ -18,6 +18,8 @@ import {
   validatePatientDocument,
 } from "@/lib/patient-document";
 import { REFERRAL_SOURCE_OPTIONS } from "@/lib/referral-sources";
+import DateRangeFilter from "@/components/date-range-filter";
+import { isIsoDateInLocalRange } from "@/lib/date-range";
 
 registerLocale("es", es);
 
@@ -61,6 +63,8 @@ export default function PatientsPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [searchName, setSearchName] = useState("");
   const [searchDni, setSearchDni] = useState("");
+  const [registerDateFrom, setRegisterDateFrom] = useState("");
+  const [registerDateTo, setRegisterDateTo] = useState("");
 
   useEffect(() => {
     fetch("/api/patients")
@@ -278,16 +282,31 @@ export default function PatientsPage() {
     setDniError(null);
   }
 
-  const filteredPatients = patients.filter((p) => {
-    const matchesName = searchName
-      ? p.fullName.toLowerCase().includes(searchName.toLowerCase())
-      : true;
-    const matchesDni = searchDni
-      ? formatPatientDocument(p).toLowerCase().includes(searchDni.toLowerCase()) ||
-        p.dni.toLowerCase().includes(searchDni.toLowerCase())
-      : true;
-    return matchesName && matchesDni;
-  });
+  const filteredPatients = useMemo(
+    () =>
+      patients.filter((p) => {
+        const matchesName = searchName
+          ? p.fullName.toLowerCase().includes(searchName.toLowerCase())
+          : true;
+        const matchesDni = searchDni
+          ? formatPatientDocument(p)
+              .toLowerCase()
+              .includes(searchDni.toLowerCase()) ||
+            p.dni.toLowerCase().includes(searchDni.toLowerCase())
+          : true;
+        const createdAt =
+          p.createdAt instanceof Date
+            ? p.createdAt.toISOString()
+            : String(p.createdAt);
+        const matchesDate = isIsoDateInLocalRange(
+          createdAt,
+          registerDateFrom,
+          registerDateTo,
+        );
+        return matchesName && matchesDni && matchesDate;
+      }),
+    [patients, searchName, searchDni, registerDateFrom, registerDateTo],
+  );
 
   return (
     <main className="space-y-6 p-4 sm:p-6">
@@ -585,7 +604,7 @@ export default function PatientsPage() {
       <section className="mt-4 rounded-xl border border-slate-200 bg-white p-4 text-xs shadow-sm">
         <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
           <h2 className="text-sm font-semibold text-slate-900">
-            Lista de pacientes
+            Lista de pacientes ({filteredPatients.length})
           </h2>
           <div className="flex flex-1 flex-col gap-2 sm:flex-row sm:justify-end">
             <div className="flex items-center gap-2">
@@ -612,6 +631,22 @@ export default function PatientsPage() {
               />
             </div>
           </div>
+          <div className="mt-3 border-t border-slate-100 pt-3">
+            <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+              Fecha de registro
+            </p>
+            <DateRangeFilter
+              dateFrom={registerDateFrom}
+              dateTo={registerDateTo}
+              onDateFromChange={setRegisterDateFrom}
+              onDateToChange={setRegisterDateTo}
+              onClear={() => {
+                setRegisterDateFrom("");
+                setRegisterDateTo("");
+              }}
+              showPresets
+            />
+          </div>
         </div>
         {patients.length === 0 ? (
           <p className="text-slate-500">Aún no hay pacientes registrados.</p>
@@ -632,7 +667,7 @@ export default function PatientsPage() {
                 </tr>
               </thead>
               <tbody>
-                {filteredPatients.slice(0, 15).map((p) => {
+                {filteredPatients.map((p) => {
                   const edad = calcularEdad(p.birthDate as unknown as string);
                   return (
                     <tr key={p.id} className="hover:bg-slate-50">

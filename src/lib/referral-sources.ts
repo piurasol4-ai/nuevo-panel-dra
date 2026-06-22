@@ -23,15 +23,26 @@ export function isKnownReferralSource(
   return (REFERRAL_SOURCE_OPTIONS as readonly string[]).includes(value);
 }
 
+export type ReferralStatPatient = {
+  id: string;
+  fullName: string;
+  documentType: string;
+  dni: string;
+  registeredAt: string;
+};
+
 export type ReferralStatRow = {
   source: string;
   count: number;
   percent: number;
+  patients: ReferralStatPatient[];
 };
 
 export type ReferralStatsResponse = {
   totalPatients: number;
   withSource: number;
   withoutSource: number;
+  dateFrom: string | null;
+  dateTo: string | null;
   breakdown: ReferralStatRow[];
 };

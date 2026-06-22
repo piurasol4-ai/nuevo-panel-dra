@@ -1,6 +1,6 @@
  "use client";
 
-import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Patient } from "@prisma/client";
 import { useSearchParams } from "next/navigation";
 
@@ -8,6 +8,8 @@ import {
   clinicalAttachmentSizeErrorMessage,
   isClinicalAttachmentOverLimit,
 } from "@/lib/clinical-attachment-limits";
+import { notifyVisitUpdated } from "@/lib/clinical-visit-sync";
+import DateRangeFilter from "@/components/date-range-filter";
 import { formatPatientDocument } from "@/lib/patient-document";
 
 // Evita el prerender estático en build (Railway/Next),
@@ -54,6 +56,22 @@ type ClinicalNote = {
   glucose: string | null;
   attachments?: ClinicalAttachment[];
 };
+
+/** Campos que se guardan solos y se sincronizan con Registro de atenciones. */
+type AtencionAutosaveFields = {
+  consultationReason: string;
+  nursingNotes: string;
+  weight: string;
+  height: string;
+  bodyTemperature: string;
+  bloodPressure: string;
+  oxygenSaturation: string;
+  heartRate: string;
+  respiratoryRate: string;
+  glucose: string;
+};
+
+const AUTOSAVE_DEBOUNCE_MS = 1500;
 
 type PatientExtras = Patient & {
   address?: string | null;
@@ -321,6 +339,9 @@ function HistoriasClinicasPageInner() {
   const [notes, setNotes] = useState<ClinicalNote[]>([]);
   const [loadingNotes, setLoadingNotes] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [autosaveStatus, setAutosaveStatus] = useState<
+    "idle" | "pending" | "saving" | "saved" | "error"
+  >("idle");
   const [error, setError] = useState<string | null>(null);
 
   const [consultationReason, setConsultationReason] = useState("");
@@ -346,10 +367,18 @@ function HistoriasClinicasPageInner() {
   const [historySortOrder, setHistorySortOrder] = useState<"desc" | "asc">(
     "desc",
   );
+  const [noteDateFrom, setNoteDateFrom] = useState("");
+  const [noteDateTo, setNoteDateTo] = useState("");
   const [attachments, setAttachments] = useState<ClinicalAttachment[]>([]);
   const [uploadingAttachment, setUploadingAttachment] = useState(false);
   /** Subidas temporales aún no guardadas en la ficha. */
   const pendingDriveIdsRef = useRef<Set<string>>(new Set());
+  const autosaveReadyRef = useRef(false);
+  const [autosaveReady, setAutosaveReady] = useState(false);
+  const autosaveSnapshotRef = useRef("");
+  const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autosaveInFlightRef = useRef(false);
+  const loadGenRef = useRef(0);
 
   const selectedPatient = useMemo(
     () => patients.find((p) => p.id === selectedPatientId) || null,
@@ -365,6 +394,220 @@ function HistoriasClinicasPageInner() {
     () => sortNotesByVisitDate(notes, historySortOrder),
     [notes, historySortOrder],
   );
+
+  const filteredNotes = useMemo(() => {
+    const from = noteDateFrom.trim();
+    const to = noteDateTo.trim();
+    if (!from && !to) return orderedNotes;
+    return orderedNotes.filter((n) => {
+      const day = n.visitDate ?? n.createdAt.slice(0, 10);
+      if (from && day < from) return false;
+      if (to && day > to) return false;
+      return true;
+    });
+  }, [orderedNotes, noteDateFrom, noteDateTo]);
+
+  const getAtencionAutosaveFields = useCallback(
+    (): AtencionAutosaveFields => ({
+      consultationReason,
+      nursingNotes,
+      weight,
+      height,
+      bodyTemperature,
+      bloodPressure,
+      oxygenSaturation,
+      heartRate,
+      respiratoryRate,
+      glucose,
+    }),
+    [
+      consultationReason,
+      nursingNotes,
+      weight,
+      height,
+      bodyTemperature,
+      bloodPressure,
+      oxygenSaturation,
+      heartRate,
+      respiratoryRate,
+      glucose,
+    ],
+  );
+
+  const hasAtencionAutosaveContent = useCallback(
+    (fields: AtencionAutosaveFields) =>
+      Object.values(fields).some((v) => v.trim() !== ""),
+    [],
+  );
+
+  const applySavedNoteToState = useCallback((saved: ClinicalNote) => {
+    setEditingNoteId(saved.id);
+    setConsultationReason(saved.consultationReason ?? "");
+    setCurrentIllness(saved.currentIllness ?? "");
+    setPhysicalExam(saved.physicalExam ?? "");
+    setDiagnostics(saved.diagnostics ?? "");
+    setDiagnosis(saved.diagnosis ?? "");
+    setEvolutionNotes(saved.evolutionNotes ?? "");
+    setNursingNotes(saved.nursingNotes ?? "");
+    setTreatmentNotes(saved.treatmentNotes ?? "");
+    setWeight(saved.weight ?? "");
+    setHeight(saved.height ?? "");
+    setBodyTemperature(saved.bodyTemperature ?? "");
+    setBloodPressure(saved.bloodPressure ?? "");
+    setOxygenSaturation(saved.oxygenSaturation ?? "");
+    setHeartRate(saved.heartRate ?? "");
+    setRespiratoryRate(saved.respiratoryRate ?? "");
+    setGlucose(saved.glucose ?? "");
+    setVisitDate(saved.visitDate ?? toLocalISODate(new Date(saved.createdAt)));
+    setAttachments(saved.attachments ?? []);
+    pendingDriveIdsRef.current.clear();
+  }, []);
+
+  const mergeSavedNoteInList = useCallback(
+    (saved: ClinicalNote, isEditing: boolean) => {
+      setNotes((prev) =>
+        sortNotesByVisitDate(
+          isEditing
+            ? prev.map((n) => (n.id === saved.id ? saved : n))
+            : prev.some((n) => n.id === saved.id)
+              ? prev.map((n) => (n.id === saved.id ? saved : n))
+              : [saved, ...prev],
+          "desc",
+        ),
+      );
+    },
+    [],
+  );
+
+  useEffect(() => {
+    loadGenRef.current += 1;
+    autosaveReadyRef.current = false;
+    setAutosaveReady(false);
+    setAutosaveStatus("idle");
+    if (autosaveTimerRef.current) {
+      clearTimeout(autosaveTimerRef.current);
+      autosaveTimerRef.current = null;
+    }
+  }, [selectedPatientId, editingNoteId]);
+
+  useEffect(() => {
+    if (!selectedPatientId || loadingNotes) {
+      autosaveReadyRef.current = false;
+      setAutosaveReady(false);
+      return;
+    }
+    const gen = loadGenRef.current;
+    const t = setTimeout(() => {
+      if (gen !== loadGenRef.current) return;
+      autosaveSnapshotRef.current = JSON.stringify(getAtencionAutosaveFields());
+      autosaveReadyRef.current = true;
+      setAutosaveReady(true);
+    }, 500);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- snapshot solo al cargar/cambiar ficha
+  }, [selectedPatientId, loadingNotes, editingNoteId]);
+
+  const runAtencionAutosave = useCallback(async () => {
+    if (
+      !selectedPatientId ||
+      !autosaveReadyRef.current ||
+      saving ||
+      autosaveInFlightRef.current
+    ) {
+      return;
+    }
+
+    const fields = getAtencionAutosaveFields();
+    const serialized = JSON.stringify(fields);
+    if (serialized === autosaveSnapshotRef.current) return;
+    if (!editingNoteId && !hasAtencionAutosaveContent(fields)) return;
+
+    autosaveInFlightRef.current = true;
+    setAutosaveStatus("saving");
+
+    try {
+      const isEditing = Boolean(editingNoteId);
+      const res = await fetch("/api/clinical-notes", {
+        method: isEditing ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...(isEditing ? { id: editingNoteId } : {}),
+          patientId: selectedPatientId,
+          visitDate,
+          ...fields,
+        }),
+      });
+      const txt = await res.text();
+      const payload = txt
+        ? (() => {
+            try {
+              return JSON.parse(txt);
+            } catch {
+              return { error: "Respuesta inválida del servidor." };
+            }
+          })()
+        : null;
+
+      if (!res.ok || !payload || typeof payload !== "object") {
+        setAutosaveStatus("error");
+        return;
+      }
+
+      const saved = payload as ClinicalNote;
+      mergeSavedNoteInList(saved, isEditing);
+      autosaveSnapshotRef.current = serialized;
+      if (!isEditing) {
+        setEditingNoteId(saved.id);
+      }
+      notifyVisitUpdated(selectedPatientId, saved.id);
+      setAutosaveStatus("saved");
+      window.setTimeout(() => setAutosaveStatus("idle"), 2500);
+    } catch (err) {
+      console.error(err);
+      setAutosaveStatus("error");
+    } finally {
+      autosaveInFlightRef.current = false;
+    }
+  }, [
+    selectedPatientId,
+    saving,
+    editingNoteId,
+    visitDate,
+    getAtencionAutosaveFields,
+    hasAtencionAutosaveContent,
+    mergeSavedNoteInList,
+  ]);
+
+  useEffect(() => {
+    if (!selectedPatientId || !autosaveReady || saving) return;
+
+    const fields = getAtencionAutosaveFields();
+    const serialized = JSON.stringify(fields);
+    if (serialized === autosaveSnapshotRef.current) return;
+    if (!editingNoteId && !hasAtencionAutosaveContent(fields)) return;
+
+    setAutosaveStatus("pending");
+    if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+    autosaveTimerRef.current = setTimeout(() => {
+      void runAtencionAutosave();
+    }, AUTOSAVE_DEBOUNCE_MS);
+
+    return () => {
+      if (autosaveTimerRef.current) {
+        clearTimeout(autosaveTimerRef.current);
+        autosaveTimerRef.current = null;
+      }
+    };
+  }, [
+    selectedPatientId,
+    autosaveReady,
+    saving,
+    editingNoteId,
+    visitDate,
+    getAtencionAutosaveFields,
+    hasAtencionAutosaveContent,
+    runAtencionAutosave,
+  ]);
 
   function calcularEdadDetallada(fechaISO: string | Date) {
     const fecha =
@@ -689,6 +932,11 @@ function HistoriasClinicasPageInner() {
       return;
     }
 
+    if (autosaveTimerRef.current) {
+      clearTimeout(autosaveTimerRef.current);
+      autosaveTimerRef.current = null;
+    }
+
     setSaving(true);
     setError(null);
     try {
@@ -743,38 +991,12 @@ function HistoriasClinicasPageInner() {
         return;
       }
 
-      setNotes((prev) =>
-        sortNotesByVisitDate(
-          isEditing
-            ? prev.map((n) => (n.id === (payload as ClinicalNote).id ? (payload as ClinicalNote) : n))
-            : [(payload as ClinicalNote), ...prev],
-          "desc",
-        ),
-      );
-      // Mantener la ficha seleccionada y reflejar los valores guardados.
       const saved = payload as ClinicalNote;
-      setEditingNoteId(saved.id);
-      setConsultationReason(saved.consultationReason ?? "");
-      setCurrentIllness(saved.currentIllness ?? "");
-      setPhysicalExam(saved.physicalExam ?? "");
-      setDiagnostics(saved.diagnostics ?? "");
-      setDiagnosis(saved.diagnosis ?? "");
-      setEvolutionNotes(saved.evolutionNotes ?? "");
-      setNursingNotes(saved.nursingNotes ?? "");
-      setTreatmentNotes(saved.treatmentNotes ?? "");
-      setWeight(saved.weight ?? "");
-      setHeight(saved.height ?? "");
-      setBodyTemperature(saved.bodyTemperature ?? "");
-      setBloodPressure(saved.bloodPressure ?? "");
-      setOxygenSaturation(saved.oxygenSaturation ?? "");
-      setHeartRate(saved.heartRate ?? "");
-      setRespiratoryRate(saved.respiratoryRate ?? "");
-      setGlucose(saved.glucose ?? "");
-      setVisitDate(
-        saved.visitDate ?? toLocalISODate(new Date(saved.createdAt)),
-      );
-      setAttachments(saved.attachments ?? []);
-      pendingDriveIdsRef.current.clear();
+      mergeSavedNoteInList(saved, isEditing);
+      applySavedNoteToState(saved);
+      autosaveSnapshotRef.current = JSON.stringify(getAtencionAutosaveFields());
+      setAutosaveStatus("idle");
+      notifyVisitUpdated(selectedPatientId, saved.id);
     } catch (err) {
       console.error(err);
       setError("No se pudo guardar la historia clínica.");
@@ -964,7 +1186,32 @@ function HistoriasClinicasPageInner() {
 
             <div className="space-y-2">
               <div className="space-y-1">
-                <label className="text-xs text-slate-600">Signos vitales</label>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <label className="text-xs text-slate-600">Signos vitales</label>
+                  {autosaveStatus !== "idle" && (
+                    <span
+                      className={`text-[11px] ${
+                        autosaveStatus === "error"
+                          ? "text-red-600"
+                          : autosaveStatus === "saved"
+                            ? "text-emerald-700"
+                            : "text-slate-500"
+                      }`}
+                    >
+                      {autosaveStatus === "pending" && "Guardando en breve…"}
+                      {autosaveStatus === "saving" && "Guardando automáticamente…"}
+                      {autosaveStatus === "saved" &&
+                        "Guardado · visible en Registro de atenciones"}
+                      {autosaveStatus === "error" &&
+                        "No se pudo guardar automáticamente"}
+                    </span>
+                  )}
+                </div>
+                <p className="text-[11px] text-slate-500">
+                  Motivo de consulta, notas de enfermería y signos vitales se
+                  guardan solos al escribir y aparecen en Registro de atenciones
+                  sin recargar la página.
+                </p>
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   <input
                     className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
@@ -1191,6 +1438,22 @@ function HistoriasClinicasPageInner() {
               <option value="asc">Más antiguas primero</option>
             </select>
           </div>
+          <div className="space-y-1">
+            <p className="text-xs font-semibold text-slate-700">
+              Fecha de atención
+            </p>
+            <DateRangeFilter
+              dateFrom={noteDateFrom}
+              dateTo={noteDateTo}
+              onDateFromChange={setNoteDateFrom}
+              onDateToChange={setNoteDateTo}
+              onClear={() => {
+                setNoteDateFrom("");
+                setNoteDateTo("");
+              }}
+              showPresets
+            />
+          </div>
         </div>
         {!selectedPatientId ? (
           <p className="text-xs text-slate-500">
@@ -1202,11 +1465,15 @@ function HistoriasClinicasPageInner() {
           <p className="text-xs text-slate-500">
             Aún no hay notas clínicas registradas para este paciente.
           </p>
+        ) : filteredNotes.length === 0 ? (
+          <p className="text-xs text-slate-500">
+            No hay fichas en el rango de fechas seleccionado.
+          </p>
         ) : (
           <div className="space-y-3">
             <div className="flex flex-col gap-2">
               <div className="flex flex-wrap gap-2">
-                {orderedNotes.map((n) => {
+                {filteredNotes.map((n) => {
                   const labelDate = n.visitDate
                     ? new Date(n.visitDate + "T00:00:00")
                     : new Date(n.createdAt);

@@ -16,6 +16,8 @@ import {
   clinicalAttachmentSizeErrorMessage,
   isClinicalAttachmentOverLimit,
 } from "@/lib/clinical-attachment-limits";
+import { subscribeVisitUpdated } from "@/lib/clinical-visit-sync";
+import DateRangeFilter from "@/components/date-range-filter";
 
 type RegistroRow = {
   visitId: string;
@@ -126,6 +128,20 @@ function attachmentsFromVisit(v: Record<string, unknown>): ClinicalAttachment[] 
   return raw.filter(isClinicalAttachment);
 }
 
+/** Campos de la pestaña Atención que se sincronizan desde Historias clínicas. */
+const ATENCION_SYNC_KEYS = [
+  "consultationReason",
+  "nursingNotes",
+  "weight",
+  "height",
+  "bodyTemperature",
+  "bloodPressure",
+  "oxygenSaturation",
+  "heartRate",
+  "respiratoryRate",
+  "glucose",
+] as const;
+
 function RegistroAtencionesPageInner() {
   const searchParams = useSearchParams();
   const highlightVisitId = searchParams.get("visitId");
@@ -135,7 +151,8 @@ function RegistroAtencionesPageInner() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filterText, setFilterText] = useState("");
-  const [filterDate, setFilterDate] = useState("");
+  const [filterDateFrom, setFilterDateFrom] = useState("");
+  const [filterDateTo, setFilterDateTo] = useState("");
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [tab, setTab] = useState<TabId>("atencion");
@@ -168,9 +185,72 @@ function RegistroAtencionesPageInner() {
     }
   }, []);
 
+  const refreshSelectedVisit = useCallback(async () => {
+    if (!selectedId || !visitPatientId || saving) return;
+    try {
+      const res = await fetch(
+        `/api/clinical-notes?patientId=${encodeURIComponent(visitPatientId)}`,
+      );
+      if (!res.ok) return;
+      const visits = (await res.json()) as Array<Record<string, unknown>>;
+      const fresh = visits.find((v) => v.id === selectedId);
+      if (!fresh) return;
+
+      const fromServer = visitToDraft(fresh);
+      setDraft((prev) => {
+        const next = { ...prev };
+        for (const key of ATENCION_SYNC_KEYS) {
+          next[key] = fromServer[key];
+        }
+        return next;
+      });
+
+      setRows((prev) =>
+        prev.map((r) =>
+          r.visitId === selectedId ? { ...r, visit: fresh } : r,
+        ),
+      );
+    } catch {
+      // sincronización en segundo plano
+    }
+  }, [selectedId, visitPatientId, saving]);
+
   useEffect(() => {
     void loadList();
   }, [loadList]);
+
+  useEffect(() => {
+    if (!selectedId || !visitPatientId) return;
+
+    const sync = () => {
+      void refreshSelectedVisit();
+    };
+
+    const unsub = subscribeVisitUpdated((msg) => {
+      if (msg.patientId === visitPatientId && msg.visitId === selectedId) {
+        sync();
+      }
+    });
+
+    const interval = window.setInterval(sync, 8000);
+
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") sync();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      unsub();
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [selectedId, visitPatientId, refreshSelectedVisit]);
+
+  useEffect(() => {
+    if (tab === "atencion" && selectedId) {
+      void refreshSelectedVisit();
+    }
+  }, [tab, selectedId, refreshSelectedVisit]);
 
   useEffect(() => {
     if (!rows.length) return;
@@ -230,9 +310,12 @@ function RegistroAtencionesPageInner() {
 
   const filteredRows = useMemo(() => {
     const q = filterText.trim().toLowerCase();
-    const d = filterDate.trim();
+    const from = filterDateFrom.trim();
+    const to = filterDateTo.trim();
     return rows.filter((r) => {
-      if (d && (r.visitDate ?? r.createdAt.slice(0, 10)) !== d) return false;
+      const visitDay = r.visitDate ?? r.createdAt.slice(0, 10);
+      if (from && visitDay < from) return false;
+      if (to && visitDay > to) return false;
       if (!q) return true;
       return (
         r.patientName.toLowerCase().includes(q) ||
@@ -240,7 +323,7 @@ function RegistroAtencionesPageInner() {
         r.summary.toLowerCase().includes(q)
       );
     });
-  }, [rows, filterText, filterDate]);
+  }, [rows, filterText, filterDateFrom, filterDateTo]);
 
   function selectRow(r: RegistroRow) {
     setSelectedId(r.visitId);
@@ -542,15 +625,22 @@ function RegistroAtencionesPageInner() {
             onChange={(e) => setFilterText(e.target.value)}
           />
         </label>
-        <label className="flex flex-col text-xs font-medium text-slate-600">
+        <div className="flex flex-col text-xs font-medium text-slate-600">
           Fecha de atención
-          <input
-            type="date"
-            className="mt-1 rounded-lg border border-slate-300 px-3 py-2 text-sm"
-            value={filterDate}
-            onChange={(e) => setFilterDate(e.target.value)}
-          />
-        </label>
+          <div className="mt-1">
+            <DateRangeFilter
+              dateFrom={filterDateFrom}
+              dateTo={filterDateTo}
+              onDateFromChange={setFilterDateFrom}
+              onDateToChange={setFilterDateTo}
+              onClear={() => {
+                setFilterDateFrom("");
+                setFilterDateTo("");
+              }}
+              showPresets
+            />
+          </div>
+        </div>
         <button
           type="button"
           onClick={() => void loadList()}
@@ -655,7 +745,8 @@ function RegistroAtencionesPageInner() {
                 <div className="space-y-3">
                   <p className="text-xs text-slate-500">
                     Motivo de consulta y signos vitales. Se guarda en la misma ficha
-                    que en Historias clínicas.
+                    que en Historias clínicas. Los valores guardados en Historias se
+                    actualizan aquí automáticamente.
                   </p>
                   {(
                     [
