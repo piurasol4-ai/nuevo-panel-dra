@@ -255,6 +255,85 @@ function mapBodyToVisitFieldsPartial(
   return out;
 }
 
+function getVisitDateKey(v: Visit): string {
+  return v.visitDate ?? v.createdAt.slice(0, 10);
+}
+
+/**
+ * Evita duplicar fichas cuando Historias y Agenda (Atención) crean la misma visita del día.
+ */
+function findVisitToReuseOnCreate(
+  visits: Visit[],
+  params: { visitDate: string; appointmentId?: string | null },
+): Visit | null {
+  const apptId = params.appointmentId?.trim() || null;
+
+  if (apptId) {
+    const byAppt = visits.find((v) => v.appointmentId === apptId);
+    if (byAppt) return byAppt;
+  }
+
+  const sameDay = visits.filter((v) => getVisitDateKey(v) === params.visitDate);
+  if (sameDay.length === 0) return null;
+
+  if (apptId) {
+    const unlinked = sameDay.filter((v) => !v.appointmentId);
+    if (unlinked.length === 1) return unlinked[0];
+    return null;
+  }
+
+  if (sameDay.length === 1) return sameDay[0];
+
+  const withAppt = sameDay.filter((v) => v.appointmentId);
+  if (withAppt.length === 1) return withAppt[0];
+
+  return sameDay
+    .slice()
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+}
+
+function mergeVisitOnCreate(
+  existing: Visit,
+  body: Partial<VisitBodyInput>,
+  visitDate: string,
+): Visit {
+  const partial = mapBodyToVisitFieldsPartial(body);
+  const merged: Visit = {
+    ...existing,
+    ...partial,
+    visitDate,
+  };
+
+  if (body.appointmentId?.trim() && !existing.appointmentId) {
+    merged.appointmentId = body.appointmentId.trim();
+  }
+
+  const fillIfEmpty = (key: keyof Visit) => {
+    const fromBody = partial[key];
+    const cur = existing[key];
+    if (
+      (cur == null || cur === "") &&
+      fromBody != null &&
+      fromBody !== ""
+    ) {
+      (merged as Record<string, unknown>)[key as string] = fromBody;
+    }
+  };
+  for (const key of [
+    "consultationReason",
+    "procedureName",
+    "procedureNote",
+  ] as const) {
+    fillIfEmpty(key);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(body, "attachments")) {
+    merged.attachments = normalizeAttachments(body.attachments);
+  }
+
+  return merged;
+}
+
 async function loadHistoryAndVisits(patientId: string) {
   // Buscamos TODAS las filas legacy para consolidarlas en el primer registro.
   const rows = await prisma.clinicalNote.findMany({
@@ -362,6 +441,26 @@ export async function POST(request: NextRequest) {
     const { history, visits } = await loadHistoryAndVisits(patientId);
     const visitDate =
       body.visitDate ?? new Date().toISOString().slice(0, 10);
+
+    const existing = findVisitToReuseOnCreate(visits, {
+      visitDate,
+      appointmentId: body.appointmentId,
+    });
+
+    if (existing) {
+      const updatedVisit = mergeVisitOnCreate(existing, body, visitDate);
+      const updatedVisits = visits.map((v) =>
+        v.id === existing.id ? updatedVisit : v,
+      );
+      await prisma.clinicalNote.update({
+        where: { id: history.id },
+        data: { visits: updatedVisits },
+      });
+      return NextResponse.json(
+        toVisitDTO(patientId, history.historyNumber, updatedVisit),
+        { status: 200 },
+      );
+    }
 
     const createdAtIso =
       typeof body.createdAt === "string" && body.createdAt.length > 10

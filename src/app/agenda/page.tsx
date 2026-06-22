@@ -552,11 +552,46 @@ function AgendaPageInner() {
       const visits = (await notesRes.json()) as Array<{
         id: string;
         appointmentId?: string | null;
+        visitDate?: string | null;
+        createdAt?: string;
       }>;
       let visitId: string | null = null;
+      let needsAppointmentLink = false;
       if (notesRes.ok && Array.isArray(visits)) {
         const found = visits.find((v) => v.appointmentId === a.id);
-        if (found) visitId = found.id;
+        if (found) {
+          visitId = found.id;
+        } else {
+          const sameDay = visits.filter((v) => {
+            const vd =
+              v.visitDate ??
+              (typeof v.createdAt === "string"
+                ? v.createdAt.slice(0, 10)
+                : "");
+            return vd === targetVisitDate;
+          });
+          const unlinked = sameDay.find((v) => !v.appointmentId);
+          if (unlinked) {
+            visitId = unlinked.id;
+            needsAppointmentLink = true;
+          } else if (sameDay.length === 1) {
+            visitId = sameDay[0].id;
+            if (!sameDay[0].appointmentId) needsAppointmentLink = true;
+          }
+        }
+      }
+      if (visitId && needsAppointmentLink) {
+        await fetch("/api/clinical-notes", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: visitId,
+            patientId: a.patientId,
+            appointmentId: a.id,
+            procedureName: a.type || null,
+            consultationReason: a.reason || null,
+          }),
+        });
       }
       if (!visitId) {
         const postRes = await fetch("/api/clinical-notes", {
