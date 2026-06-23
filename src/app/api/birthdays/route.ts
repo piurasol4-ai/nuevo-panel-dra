@@ -24,16 +24,32 @@ export async function GET(request: NextRequest) {
 
   const { month, day } = getLimaMonthDay(baseDate);
 
-  const patients = await prisma.patient.findMany({
-    orderBy: { fullName: "asc" },
-  });
-
-  const todayBirthdays = patients.filter((p) => {
-    const bd = new Date(p.birthDate);
-    const lima = getLimaMonthDay(bd);
-    return lima.month === month && lima.day === day;
-  });
+  const todayBirthdays = await prisma.$queryRaw<
+    Array<{
+      id: string;
+      fullName: string;
+      documentType: string;
+      dni: string;
+      phone: string;
+      address: string;
+      birthDate: Date;
+      emergencyContactName: string | null;
+      emergencyContactPhone: string | null;
+      allergyNotes: string | null;
+      medicalHistory: string | null;
+      referralSource: string | null;
+      status: string;
+      notes: string | null;
+      createdAt: Date;
+      updatedAt: Date;
+    }>
+  >`
+    SELECT *
+    FROM "Patient"
+    WHERE EXTRACT(MONTH FROM ("birthDate" AT TIME ZONE 'America/Lima')) = ${month}
+      AND EXTRACT(DAY FROM ("birthDate" AT TIME ZONE 'America/Lima')) = ${day}
+    ORDER BY "fullName" ASC
+  `;
 
   return NextResponse.json(todayBirthdays);
 }
-

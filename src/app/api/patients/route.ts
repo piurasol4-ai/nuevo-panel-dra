@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { PATIENT_LIST_SELECT } from "@/lib/patient-queries";
 import { validatePatientDocument } from "@/lib/patient-document";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const lite = request.nextUrl.searchParams.get("lite") === "1";
+
   const patients = await prisma.patient.findMany({
+    select: lite ? PATIENT_LIST_SELECT : undefined,
     orderBy: { createdAt: "desc" },
   });
   return NextResponse.json(patients);

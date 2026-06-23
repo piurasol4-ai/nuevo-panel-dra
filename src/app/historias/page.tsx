@@ -648,7 +648,7 @@ function HistoriasClinicasPageInner() {
   }, [patients, patientQuery]);
 
   useEffect(() => {
-    fetch("/api/patients")
+    fetch("/api/patients?lite=1")
       .then((r) => r.json())
       .then(setPatients)
       .catch((err) => {

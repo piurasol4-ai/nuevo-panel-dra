@@ -1,10 +1,28 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { formatPatientDocument } from "@/lib/patient-document";
+import { toLocalISODate } from "@/lib/date-range";
 
 function isVisitArray(value: unknown): value is Array<Record<string, unknown>> {
   if (!Array.isArray(value)) return false;
   return value.every((v) => v && typeof v === "object" && "id" in v);
+}
+
+function defaultDateFrom(): string {
+  const now = new Date();
+  return toLocalISODate(new Date(now.getFullYear(), now.getMonth(), 1));
+}
+
+function visitInRange(
+  visitDate: string | null | undefined,
+  createdAt: string,
+  dateFrom: string,
+  dateTo: string,
+): boolean {
+  const day = visitDate ?? createdAt.slice(0, 10);
+  if (dateFrom && day < dateFrom) return false;
+  if (dateTo && day > dateTo) return false;
+  return true;
 }
 
 export type RegistroAtencionRow = {
@@ -18,13 +36,27 @@ export type RegistroAtencionRow = {
   appointmentId: string | null;
   procedureName: string | null;
   summary: string;
-  visit: Record<string, unknown>;
 };
 
-/** Lista plana de todas las fichas de atención (visitas) con datos del paciente. */
-export async function GET() {
+/** Lista plana de fichas de atención (sin el JSON completo de cada visita). */
+export async function GET(request: NextRequest) {
+  const { searchParams } = new URL(request.url);
+  const dateFrom = searchParams.get("dateFrom")?.trim() || defaultDateFrom();
+  const dateTo = searchParams.get("dateTo")?.trim() || toLocalISODate(new Date());
+
   const notes = await prisma.clinicalNote.findMany({
-    include: { patient: true },
+    select: {
+      historyNumber: true,
+      visits: true,
+      patient: {
+        select: {
+          id: true,
+          fullName: true,
+          documentType: true,
+          dni: true,
+        },
+      },
+    },
     orderBy: { createdAt: "asc" },
   });
 
@@ -46,6 +78,7 @@ export async function GET() {
         procedureName?: string | null;
       };
       if (!v.id || !v.createdAt) continue;
+      if (!visitInRange(v.visitDate, v.createdAt, dateFrom, dateTo)) continue;
 
       const summaryParts = [v.consultationReason, v.diagnosis].filter(
         (x) => x && String(x).trim(),
@@ -66,7 +99,6 @@ export async function GET() {
         appointmentId: v.appointmentId ?? null,
         procedureName: v.procedureName ?? null,
         summary,
-        visit: raw as Record<string, unknown>,
       });
     }
   }
@@ -78,5 +110,9 @@ export async function GET() {
     return b.createdAt.localeCompare(a.createdAt);
   });
 
-  return NextResponse.json(rows);
+  return NextResponse.json(rows, {
+    headers: {
+      "Cache-Control": "private, no-store",
+    },
+  });
 }

@@ -335,27 +335,27 @@ function mergeVisitOnCreate(
 }
 
 async function loadHistoryAndVisits(patientId: string) {
-  // Buscamos TODAS las filas legacy para consolidarlas en el primer registro.
-  const rows = await prisma.clinicalNote.findMany({
+  const history = await prisma.clinicalNote.findFirst({
     where: { patientId },
     orderBy: { createdAt: "asc" },
   });
 
-  if (rows.length === 0) {
-    const history = await prisma.clinicalNote.create({
+  if (!history) {
+    const created = await prisma.clinicalNote.create({
       data: { patientId },
     });
-    return { history, visits: [] as Visit[] };
+    return { history: created, visits: [] as Visit[] };
   }
 
-  const history = rows[0];
-
-  // Si el campo visits ya tiene datos, usamos eso.
   if (isVisitArray(history.visits)) {
     return { history, visits: history.visits };
   }
 
-  // Caso legacy: convertimos los campos raíz de cada fila a visitas.
+  // Caso legacy: varias filas antiguas por paciente — consolidar una sola vez.
+  const rows = await prisma.clinicalNote.findMany({
+    where: { patientId },
+    orderBy: { createdAt: "asc" },
+  });
   const legacyVisits: Visit[] = rows.map((r) => ({
     id: r.id,
     createdAt: r.createdAt.toISOString(),

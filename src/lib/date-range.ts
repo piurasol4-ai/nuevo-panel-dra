@@ -23,6 +23,10 @@ export function toLocalISODate(d: Date): string {
   return `${year}-${month}-${day}`;
 }
 
+export function startOfMonthISO(d = new Date()): string {
+  return toLocalISODate(new Date(d.getFullYear(), d.getMonth(), 1));
+}
+
 export function createdAtRangeWhere(
   dateFrom?: string | null,
   dateTo?: string | null,

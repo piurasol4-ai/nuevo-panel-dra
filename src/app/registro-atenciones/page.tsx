@@ -18,6 +18,7 @@ import {
 } from "@/lib/clinical-attachment-limits";
 import { subscribeVisitUpdated } from "@/lib/clinical-visit-sync";
 import DateRangeFilter from "@/components/date-range-filter";
+import { buildDateRangeQuery, startOfMonthISO, toLocalISODate } from "@/lib/date-range";
 
 type RegistroRow = {
   visitId: string;
@@ -30,7 +31,6 @@ type RegistroRow = {
   appointmentId: string | null;
   procedureName: string | null;
   summary: string;
-  visit: Record<string, unknown>;
 };
 
 type TabId = "atencion" | "procedimiento" | "receta" | "examenes" | "descanso";
@@ -151,8 +151,9 @@ function RegistroAtencionesPageInner() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filterText, setFilterText] = useState("");
-  const [filterDateFrom, setFilterDateFrom] = useState("");
-  const [filterDateTo, setFilterDateTo] = useState("");
+  const [filterDateFrom, setFilterDateFrom] = useState(() => startOfMonthISO());
+  const [filterDateTo, setFilterDateTo] = useState(() => toLocalISODate(new Date()));
+  const [visitLoading, setVisitLoading] = useState(false);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [tab, setTab] = useState<TabId>("atencion");
@@ -168,25 +169,55 @@ function RegistroAtencionesPageInner() {
   const [uploadingAttachment, setUploadingAttachment] = useState(false);
   const [uploadMsg, setUploadMsg] = useState<string | null>(null);
   const pendingDriveIdsRef = useRef<Set<string>>(new Set());
+  const visitCacheRef = useRef<Map<string, Record<string, unknown>>>(new Map());
+
+  const loadVisitDetail = useCallback(
+    async (patientId: string, visitId: string) => {
+      const cacheKey = `${patientId}:${visitId}`;
+      const cached = visitCacheRef.current.get(cacheKey);
+      if (cached) return cached;
+
+      const res = await fetch(
+        `/api/clinical-notes?patientId=${encodeURIComponent(patientId)}`,
+      );
+      if (!res.ok) throw new Error("No se pudo cargar la ficha.");
+      const visits = (await res.json()) as Array<Record<string, unknown>>;
+      const fresh = visits.find((v) => v.id === visitId);
+      if (!fresh) throw new Error("Ficha no encontrada.");
+      visitCacheRef.current.set(cacheKey, fresh);
+      return fresh;
+    },
+    [],
+  );
+
+  const applyVisitToForm = useCallback((visit: Record<string, unknown>) => {
+    setDraft(visitToDraft(visit));
+    setAttachments(attachmentsFromVisit(visit));
+    pendingDriveIdsRef.current.clear();
+  }, []);
 
   const loadList = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/registro-atenciones");
+      const res = await fetch(
+        `/api/registro-atenciones${buildDateRangeQuery(filterDateFrom, filterDateTo)}`,
+      );
       if (!res.ok) throw new Error("No se pudo cargar el registro.");
       const data = (await res.json()) as RegistroRow[];
       setRows(Array.isArray(data) ? data : []);
+      visitCacheRef.current.clear();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error de carga.");
       setRows([]);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [filterDateFrom, filterDateTo]);
 
   const refreshSelectedVisit = useCallback(async () => {
     if (!selectedId || !visitPatientId || saving) return;
+    visitCacheRef.current.delete(`${visitPatientId}:${selectedId}`);
     try {
       const res = await fetch(
         `/api/clinical-notes?patientId=${encodeURIComponent(visitPatientId)}`,
@@ -204,12 +235,7 @@ function RegistroAtencionesPageInner() {
         }
         return next;
       });
-
-      setRows((prev) =>
-        prev.map((r) =>
-          r.visitId === selectedId ? { ...r, visit: fresh } : r,
-        ),
-      );
+      visitCacheRef.current.set(`${visitPatientId}:${selectedId}`, fresh);
     } catch {
       // sincronización en segundo plano
     }
@@ -220,7 +246,7 @@ function RegistroAtencionesPageInner() {
   }, [loadList]);
 
   useEffect(() => {
-    if (!selectedId || !visitPatientId) return;
+    if (!selectedId || !visitPatientId || tab !== "atencion") return;
 
     const sync = () => {
       void refreshSelectedVisit();
@@ -232,7 +258,7 @@ function RegistroAtencionesPageInner() {
       }
     });
 
-    const interval = window.setInterval(sync, 8000);
+    const interval = window.setInterval(sync, 15000);
 
     const onVisibility = () => {
       if (document.visibilityState === "visible") sync();
@@ -244,7 +270,7 @@ function RegistroAtencionesPageInner() {
       window.clearInterval(interval);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [selectedId, visitPatientId, refreshSelectedVisit]);
+  }, [selectedId, visitPatientId, tab, refreshSelectedVisit]);
 
   useEffect(() => {
     if (tab === "atencion" && selectedId) {
@@ -267,22 +293,42 @@ function RegistroAtencionesPageInner() {
           )
         : undefined;
     const pick = fromQuery ?? rows[0];
-    setSelectedId(pick.visitId);
-    setDraft(visitToDraft(pick.visit));
-    setVisitPatientId(pick.patientId);
-  }, [rows, highlightVisitId, highlightPatientId, selectedId]);
+    void (async () => {
+      setSelectedId(pick.visitId);
+      setVisitPatientId(pick.patientId);
+      setVisitLoading(true);
+      try {
+        const visit = await loadVisitDetail(pick.patientId, pick.visitId);
+        applyVisitToForm(visit);
+      } catch {
+        setDraft({});
+        setAttachments([]);
+      } finally {
+        setVisitLoading(false);
+      }
+    })();
+  }, [
+    rows,
+    highlightVisitId,
+    highlightPatientId,
+    selectedId,
+    loadVisitDetail,
+    applyVisitToForm,
+  ]);
 
   useEffect(() => {
-    if (!selectedId) {
+    if (!selectedId || !visitPatientId) {
       setAttachments([]);
       pendingDriveIdsRef.current.clear();
       return;
     }
-    const row = rows.find((r) => r.visitId === selectedId);
-    if (!row) return;
-    setAttachments(attachmentsFromVisit(row.visit));
-    pendingDriveIdsRef.current.clear();
-  }, [selectedId, rows]);
+    const cacheKey = `${visitPatientId}:${selectedId}`;
+    const cached = visitCacheRef.current.get(cacheKey);
+    if (cached) {
+      setAttachments(attachmentsFromVisit(cached));
+      pendingDriveIdsRef.current.clear();
+    }
+  }, [selectedId, visitPatientId]);
 
   const selectedRow = useMemo(
     () => rows.find((r) => r.visitId === selectedId) ?? null,
@@ -310,12 +356,7 @@ function RegistroAtencionesPageInner() {
 
   const filteredRows = useMemo(() => {
     const q = filterText.trim().toLowerCase();
-    const from = filterDateFrom.trim();
-    const to = filterDateTo.trim();
     return rows.filter((r) => {
-      const visitDay = r.visitDate ?? r.createdAt.slice(0, 10);
-      if (from && visitDay < from) return false;
-      if (to && visitDay > to) return false;
       if (!q) return true;
       return (
         r.patientName.toLowerCase().includes(q) ||
@@ -323,14 +364,26 @@ function RegistroAtencionesPageInner() {
         r.summary.toLowerCase().includes(q)
       );
     });
-  }, [rows, filterText, filterDateFrom, filterDateTo]);
+  }, [rows, filterText]);
 
-  function selectRow(r: RegistroRow) {
+  async function selectRow(r: RegistroRow) {
     setSelectedId(r.visitId);
-    setDraft(visitToDraft(r.visit));
     setVisitPatientId(r.patientId);
     setTab("atencion");
     setSaveMsg(null);
+    setVisitLoading(true);
+    try {
+      const visit = await loadVisitDetail(r.patientId, r.visitId);
+      applyVisitToForm(visit);
+    } catch (e) {
+      setError(
+        e instanceof Error ? e.message : "No se pudo abrir la ficha seleccionada.",
+      );
+      setDraft({});
+      setAttachments([]);
+    } finally {
+      setVisitLoading(false);
+    }
   }
 
   function setField(key: string, value: string) {
@@ -457,6 +510,12 @@ function RegistroAtencionesPageInner() {
       if (Array.isArray(saved.attachments)) {
         setAttachments(saved.attachments);
         pendingDriveIdsRef.current.clear();
+      }
+      if (payload && typeof payload === "object") {
+        visitCacheRef.current.set(
+          `${visitPatientId}:${selectedId}`,
+          payload as Record<string, unknown>,
+        );
       }
       await loadList();
     } finally {
@@ -706,6 +765,9 @@ function RegistroAtencionesPageInner() {
                 <p className="text-xs text-slate-500">
                   {fmtWhen(selectedRow)} · Fecha atención:{" "}
                   {selectedRow.visitDate ?? "—"}
+                  {visitLoading && (
+                    <span className="ml-2 text-amber-700">Cargando ficha…</span>
+                  )}
                 </p>
                 <Link
                   href={`/historias?patientId=${encodeURIComponent(selectedRow.patientId)}`}
