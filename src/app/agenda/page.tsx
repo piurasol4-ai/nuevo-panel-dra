@@ -188,9 +188,9 @@ function AgendaPageInner() {
   );
 
   useEffect(() => {
-    fetch("/api/patients")
+    fetch("/api/patients?pageSize=200")
       .then((r) => r.json())
-      .then(setPatients)
+      .then((res) => setPatients(Array.isArray(res) ? res : (res?.data ?? [])))
       .catch(console.error);
   }, []);
 
@@ -339,9 +339,9 @@ function AgendaPageInner() {
   }
 
   useEffect(() => {
-    fetch(`/api/appointments?date=${selectedDateISO}`)
+    fetch(`/api/appointments?date=${selectedDateISO}&pageSize=200`)
       .then((r) => r.json())
-      .then(setAppointments)
+      .then((res) => setAppointments(Array.isArray(res) ? res : (res?.data ?? [])))
       .catch(console.error);
   }, [selectedDateISO]);
 

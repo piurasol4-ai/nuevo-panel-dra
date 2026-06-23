@@ -2,11 +2,37 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { validatePatientDocument } from "@/lib/patient-document";
 
-export async function GET() {
-  const patients = await prisma.patient.findMany({
-    orderBy: { createdAt: "desc" },
-  });
-  return NextResponse.json(patients);
+export async function GET(request: NextRequest) {
+  const { searchParams } = new URL(request.url);
+
+  const page = Math.max(1, parseInt(searchParams.get("page") ?? "1", 10));
+  const pageSize = Math.min(
+    200,
+    Math.max(1, parseInt(searchParams.get("pageSize") ?? "50", 10)),
+  );
+  const skip = (page - 1) * pageSize;
+  const search = searchParams.get("search")?.trim() ?? "";
+
+  const where = search
+    ? {
+        OR: [
+          { fullName: { contains: search, mode: "insensitive" as const } },
+          { dni: { contains: search, mode: "insensitive" as const } },
+        ],
+      }
+    : undefined;
+
+  const [patients, total] = await Promise.all([
+    prisma.patient.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      skip,
+      take: pageSize,
+    }),
+    prisma.patient.count({ where }),
+  ]);
+
+  return NextResponse.json({ data: patients, total, page, pageSize });
 }
 
 export async function POST(request: NextRequest) {

@@ -192,9 +192,10 @@ export default function RecetasPage() {
 
   async function ensurePatientsLoaded() {
     if (patients.length > 0) return;
-    const r = await fetch("/api/patients");
-    const data = (await r.json().catch(() => null)) as Patient[] | null;
-    setPatients(Array.isArray(data) ? data : []);
+    const r = await fetch("/api/patients?pageSize=200");
+    const res = (await r.json().catch(() => null)) as { data?: Patient[] } | Patient[] | null;
+    const data = Array.isArray(res) ? res : (res?.data ?? []);
+    setPatients(data);
   }
 
   useEffect(() => {
