@@ -648,9 +648,9 @@ function HistoriasClinicasPageInner() {
   }, [patients, patientQuery]);
 
   useEffect(() => {
-    fetch("/api/patients")
+    fetch("/api/patients?pageSize=200")
       .then((r) => r.json())
-      .then(setPatients)
+      .then((res) => setPatients(Array.isArray(res) ? res : (res?.data ?? [])))
       .catch((err) => {
         console.error(err);
         setError("No se pudieron cargar los pacientes.");

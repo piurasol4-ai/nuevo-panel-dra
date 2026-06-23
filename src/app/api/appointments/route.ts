@@ -5,6 +5,13 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const date = searchParams.get("date");
 
+  const page = Math.max(1, parseInt(searchParams.get("page") ?? "1", 10));
+  const pageSize = Math.min(
+    200,
+    Math.max(1, parseInt(searchParams.get("pageSize") ?? "50", 10)),
+  );
+  const skip = (page - 1) * pageSize;
+
   // findMany recibe un argumento opcional, por eso usamos NonNullable para
   // asegurar que exista la propiedad "where" al tipar.
   const where: NonNullable<Parameters<typeof prisma.appointment.findMany>[0]>["where"] = {};
@@ -14,13 +21,39 @@ export async function GET(request: NextRequest) {
     where.startAt = { gte: startOfDay, lte: endOfDay };
   }
 
-  const appointments = await prisma.appointment.findMany({
-    where,
-    include: { patient: true },
-    orderBy: { startAt: "asc" },
-  });
+  const [appointments, total] = await Promise.all([
+    prisma.appointment.findMany({
+      where,
+      select: {
+        id: true,
+        patientId: true,
+        doctorId: true,
+        startAt: true,
+        endAt: true,
+        type: true,
+        status: true,
+        reason: true,
+        notes: true,
+        createdAt: true,
+        updatedAt: true,
+        patient: {
+          select: {
+            id: true,
+            fullName: true,
+            dni: true,
+            phone: true,
+            documentType: true,
+          },
+        },
+      },
+      orderBy: { startAt: "asc" },
+      skip,
+      take: pageSize,
+    }),
+    prisma.appointment.count({ where }),
+  ]);
 
-  return NextResponse.json(appointments);
+  return NextResponse.json({ data: appointments, total, page, pageSize });
 }
 
 export async function POST(request: NextRequest) {

@@ -46,6 +46,7 @@ model Patient {
   ticketRecords TicketRecord[]
 
   @@unique([documentType, dni])
+  @@index([createdAt])
 }
 
 model Appointment {
@@ -66,6 +67,9 @@ model Appointment {
   clinicalNotes ClinicalNote[]
   recipes       Recipe[]
   ticketRecord  TicketRecord?
+
+  @@index([startAt])
+  @@index([patientId])
 }
 
 model ClinicalNote {

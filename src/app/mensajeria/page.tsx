@@ -17,9 +17,9 @@ export default function MensajeriaPage() {
   const [searchDni, setSearchDni] = useState("");
 
   useEffect(() => {
-    fetch("/api/patients")
+    fetch("/api/patients?pageSize=200")
       .then((r) => r.json())
-      .then(setPatients)
+      .then((res) => setPatients(Array.isArray(res) ? res : (res?.data ?? [])))
       .catch(console.error);
   }, []);
 
