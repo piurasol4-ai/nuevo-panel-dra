@@ -10,6 +10,15 @@ import {
 } from "@/lib/clinical-attachment-limits";
 import { notifyVisitUpdated } from "@/lib/clinical-visit-sync";
 import DateRangeFilter from "@/components/date-range-filter";
+import ClinicalRoleToggle from "@/components/clinical-role-toggle";
+import {
+  DOCTORA_FIELD_KEYS,
+  ENFERMERIA_FIELD_KEYS,
+  fieldsForRole,
+  loadClinicalEditorRole,
+  saveClinicalEditorRole,
+  type ClinicalEditorRole,
+} from "@/lib/clinical-roles";
 import { formatPatientDocument } from "@/lib/patient-document";
 
 type ClinicalAttachment = {
@@ -53,8 +62,8 @@ type ClinicalNote = {
   attachments?: ClinicalAttachment[];
 };
 
-/** Campos que se guardan solos y se sincronizan con Registro de atenciones. */
-type AtencionAutosaveFields = {
+/** Campos de enfermería (autosave / sync). */
+type EnfermeriaAutosaveFields = {
   consultationReason: string;
   nursingNotes: string;
   weight: string;
@@ -67,8 +76,17 @@ type AtencionAutosaveFields = {
   glucose: string;
 };
 
-/** Más largo = menos escrituras a BD / Railway. */
-const AUTOSAVE_DEBOUNCE_MS = 8000;
+type DoctoraAutosaveFields = {
+  currentIllness: string;
+  physicalExam: string;
+  diagnostics: string;
+  diagnosis: string;
+  evolutionNotes: string;
+  treatmentNotes: string;
+};
+
+/** Guardado frecuente: si esperan demasiado y cambian de pantalla, se pierde lo escrito. */
+const AUTOSAVE_DEBOUNCE_MS = 2000;
 
 type PatientExtras = Patient & {
   address?: string | null;
@@ -339,6 +357,8 @@ function HistoriasClinicasPageInner() {
   const [autosaveStatus, setAutosaveStatus] = useState<
     "idle" | "pending" | "saving" | "saved" | "error"
   >("idle");
+  const [editorRole, setEditorRole] = useState<ClinicalEditorRole>("enfermeria");
+  const dirtyKeysRef = useRef<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
 
   const [consultationReason, setConsultationReason] = useState("");
@@ -404,8 +424,12 @@ function HistoriasClinicasPageInner() {
     });
   }, [orderedNotes, noteDateFrom, noteDateTo]);
 
-  const getAtencionAutosaveFields = useCallback(
-    (): AtencionAutosaveFields => ({
+  useEffect(() => {
+    setEditorRole(loadClinicalEditorRole());
+  }, []);
+
+  const getEnfermeriaFields = useCallback(
+    (): EnfermeriaAutosaveFields => ({
       consultationReason,
       nursingNotes,
       weight,
@@ -431,9 +455,63 @@ function HistoriasClinicasPageInner() {
     ],
   );
 
-  const hasAtencionAutosaveContent = useCallback(
-    (fields: AtencionAutosaveFields) =>
-      Object.values(fields).some((v) => v.trim() !== ""),
+  const getDoctoraFields = useCallback(
+    (): DoctoraAutosaveFields => ({
+      currentIllness,
+      physicalExam,
+      diagnostics,
+      diagnosis,
+      evolutionNotes,
+      treatmentNotes,
+    }),
+    [
+      currentIllness,
+      physicalExam,
+      diagnostics,
+      diagnosis,
+      evolutionNotes,
+      treatmentNotes,
+    ],
+  );
+
+  const markDirty = useCallback((key: string) => {
+    dirtyKeysRef.current.add(key);
+  }, []);
+
+  const clearDirtyKeys = useCallback((keys: readonly string[]) => {
+    for (const k of keys) dirtyKeysRef.current.delete(k);
+  }, []);
+
+  const applyRemoteVisitFields = useCallback(
+    (saved: ClinicalNote, onlyKeys?: string[]) => {
+      const keys = onlyKeys?.length
+        ? onlyKeys
+        : [...ENFERMERIA_FIELD_KEYS, ...DOCTORA_FIELD_KEYS];
+      const setters: Record<string, (v: string) => void> = {
+        consultationReason: setConsultationReason,
+        nursingNotes: setNursingNotes,
+        weight: setWeight,
+        height: setHeight,
+        bodyTemperature: setBodyTemperature,
+        bloodPressure: setBloodPressure,
+        oxygenSaturation: setOxygenSaturation,
+        heartRate: setHeartRate,
+        respiratoryRate: setRespiratoryRate,
+        glucose: setGlucose,
+        currentIllness: setCurrentIllness,
+        physicalExam: setPhysicalExam,
+        diagnostics: setDiagnostics,
+        diagnosis: setDiagnosis,
+        evolutionNotes: setEvolutionNotes,
+        treatmentNotes: setTreatmentNotes,
+      };
+      for (const key of keys) {
+        if (dirtyKeysRef.current.has(key)) continue;
+        const raw = (saved as unknown as Record<string, unknown>)[key];
+        const setter = setters[key];
+        if (setter) setter(raw == null ? "" : String(raw));
+      }
+    },
     [],
   );
 
@@ -485,7 +563,9 @@ function HistoriasClinicasPageInner() {
       clearTimeout(autosaveTimerRef.current);
       autosaveTimerRef.current = null;
     }
-  }, [selectedPatientId, editingNoteId]);
+    // Solo al cambiar paciente. NO al crear/asignar editingNoteId por autosave
+    // (si no, el snapshot “come” lo tipado y nunca se vuelve a guardar).
+  }, [selectedPatientId]);
 
   useEffect(() => {
     if (!selectedPatientId || loadingNotes) {
@@ -496,15 +576,25 @@ function HistoriasClinicasPageInner() {
     const gen = loadGenRef.current;
     const t = setTimeout(() => {
       if (gen !== loadGenRef.current) return;
-      autosaveSnapshotRef.current = JSON.stringify(getAtencionAutosaveFields());
+      const snap =
+        editorRole === "enfermeria"
+          ? getEnfermeriaFields()
+          : getDoctoraFields();
+      autosaveSnapshotRef.current = JSON.stringify(snap);
       autosaveReadyRef.current = true;
       setAutosaveReady(true);
-    }, 500);
+      dirtyKeysRef.current.clear();
+    }, 400);
     return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- snapshot solo al cargar/cambiar ficha
-  }, [selectedPatientId, loadingNotes, editingNoteId]);
+  }, [
+    selectedPatientId,
+    loadingNotes,
+    editorRole,
+    getEnfermeriaFields,
+    getDoctoraFields,
+  ]);
 
-  const runAtencionAutosave = useCallback(async () => {
+  const runRoleAutosave = useCallback(async () => {
     if (
       !selectedPatientId ||
       !autosaveReadyRef.current ||
@@ -514,10 +604,15 @@ function HistoriasClinicasPageInner() {
       return;
     }
 
-    const fields = getAtencionAutosaveFields();
-    const serialized = JSON.stringify(fields);
+    const roleKeys = fieldsForRole(editorRole);
+    const fields =
+      editorRole === "enfermeria" ? getEnfermeriaFields() : getDoctoraFields();
+    const serialized = JSON.stringify({ role: editorRole, fields });
     if (serialized === autosaveSnapshotRef.current) return;
-    if (!editingNoteId && !hasAtencionAutosaveContent(fields)) return;
+    const hasContent = Object.values(fields).some(
+      (v) => String(v ?? "").trim() !== "",
+    );
+    if (!editingNoteId && !hasContent) return;
 
     autosaveInFlightRef.current = true;
     setAutosaveStatus("saving");
@@ -533,6 +628,7 @@ function HistoriasClinicasPageInner() {
           visitDate,
           ...fields,
         }),
+        keepalive: true,
       });
       const txt = await res.text();
       const payload = txt
@@ -553,10 +649,21 @@ function HistoriasClinicasPageInner() {
       const saved = payload as ClinicalNote;
       mergeSavedNoteInList(saved, isEditing);
       autosaveSnapshotRef.current = serialized;
+      clearDirtyKeys(roleKeys);
+      // Traer del servidor la sección del otro rol (sin pisar dirty local).
+      applyRemoteVisitFields(
+        saved,
+        editorRole === "enfermeria"
+          ? [...DOCTORA_FIELD_KEYS]
+          : [...ENFERMERIA_FIELD_KEYS],
+      );
       if (!isEditing) {
         setEditingNoteId(saved.id);
       }
-      notifyVisitUpdated(selectedPatientId, saved.id);
+      notifyVisitUpdated(selectedPatientId, saved.id, {
+        updatedKeys: [...roleKeys],
+        role: editorRole,
+      });
       setAutosaveStatus("saved");
       window.setTimeout(() => setAutosaveStatus("idle"), 2500);
     } catch (err) {
@@ -570,41 +677,129 @@ function HistoriasClinicasPageInner() {
     saving,
     editingNoteId,
     visitDate,
-    getAtencionAutosaveFields,
-    hasAtencionAutosaveContent,
+    editorRole,
+    getEnfermeriaFields,
+    getDoctoraFields,
     mergeSavedNoteInList,
+    clearDirtyKeys,
+    applyRemoteVisitFields,
   ]);
+
+  const armAutosaveFromNote = useCallback(
+    (n: ClinicalNote | Record<string, string | null | undefined>) => {
+      const enfermeria: EnfermeriaAutosaveFields = {
+        consultationReason: String(n.consultationReason ?? ""),
+        nursingNotes: String(n.nursingNotes ?? ""),
+        weight: String(n.weight ?? ""),
+        height: String(n.height ?? ""),
+        bodyTemperature: String(n.bodyTemperature ?? ""),
+        bloodPressure: String(n.bloodPressure ?? ""),
+        oxygenSaturation: String(n.oxygenSaturation ?? ""),
+        heartRate: String(n.heartRate ?? ""),
+        respiratoryRate: String(n.respiratoryRate ?? ""),
+        glucose: String(n.glucose ?? ""),
+      };
+      const doctora: DoctoraAutosaveFields = {
+        currentIllness: String(n.currentIllness ?? ""),
+        physicalExam: String(n.physicalExam ?? ""),
+        diagnostics: String(n.diagnostics ?? ""),
+        diagnosis: String(n.diagnosis ?? ""),
+        evolutionNotes: String(n.evolutionNotes ?? ""),
+        treatmentNotes: String(n.treatmentNotes ?? ""),
+      };
+      const fields = editorRole === "enfermeria" ? enfermeria : doctora;
+      autosaveSnapshotRef.current = JSON.stringify({
+        role: editorRole,
+        fields,
+      });
+      autosaveReadyRef.current = true;
+      setAutosaveReady(true);
+      setAutosaveStatus("idle");
+      dirtyKeysRef.current.clear();
+    },
+    [editorRole],
+  );
+
+  const flushRoleAutosave = useCallback(() => {
+    if (autosaveTimerRef.current) {
+      clearTimeout(autosaveTimerRef.current);
+      autosaveTimerRef.current = null;
+    }
+    void runRoleAutosave();
+  }, [runRoleAutosave]);
 
   useEffect(() => {
     if (!selectedPatientId || !autosaveReady || saving) return;
 
-    const fields = getAtencionAutosaveFields();
-    const serialized = JSON.stringify(fields);
+    const fields =
+      editorRole === "enfermeria" ? getEnfermeriaFields() : getDoctoraFields();
+    const serialized = JSON.stringify({ role: editorRole, fields });
     if (serialized === autosaveSnapshotRef.current) return;
-    if (!editingNoteId && !hasAtencionAutosaveContent(fields)) return;
+    const hasContent = Object.values(fields).some(
+      (v) => String(v ?? "").trim() !== "",
+    );
+    if (!editingNoteId && !hasContent) return;
 
     setAutosaveStatus("pending");
     if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
     autosaveTimerRef.current = setTimeout(() => {
-      void runAtencionAutosave();
+      void runRoleAutosave();
     }, AUTOSAVE_DEBOUNCE_MS);
-
-    return () => {
-      if (autosaveTimerRef.current) {
-        clearTimeout(autosaveTimerRef.current);
-        autosaveTimerRef.current = null;
-      }
-    };
   }, [
     selectedPatientId,
     autosaveReady,
     saving,
     editingNoteId,
     visitDate,
-    getAtencionAutosaveFields,
-    hasAtencionAutosaveContent,
-    runAtencionAutosave,
+    editorRole,
+    getEnfermeriaFields,
+    getDoctoraFields,
+    runRoleAutosave,
   ]);
+
+  useEffect(() => {
+    const onHide = () => {
+      if (document.visibilityState === "hidden") flushRoleAutosave();
+    };
+    const onPageHide = () => flushRoleAutosave();
+    document.addEventListener("visibilitychange", onHide);
+    window.addEventListener("pagehide", onPageHide);
+    return () => {
+      document.removeEventListener("visibilitychange", onHide);
+      window.removeEventListener("pagehide", onPageHide);
+      flushRoleAutosave();
+    };
+  }, [flushRoleAutosave]);
+
+  // Traer cambios del otro dispositivo/rol sin pisar lo que se está tipando.
+  useEffect(() => {
+    if (!selectedPatientId || !editingNoteId) return;
+
+    const pullRemote = async () => {
+      try {
+        const res = await fetch(
+          `/api/clinical-notes?patientId=${encodeURIComponent(selectedPatientId)}`,
+        );
+        if (!res.ok) return;
+        const visits = (await res.json()) as ClinicalNote[];
+        const fresh = visits.find((v) => v.id === editingNoteId);
+        if (!fresh) return;
+        applyRemoteVisitFields(fresh);
+      } catch {
+        // ignore
+      }
+    };
+
+    const onVis = () => {
+      if (document.visibilityState === "visible") void pullRemote();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    const interval = window.setInterval(() => void pullRemote(), 12000);
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      window.clearInterval(interval);
+    };
+  }, [selectedPatientId, editingNoteId, applyRemoteVisitFields]);
 
   function calcularEdadDetallada(fechaISO: string | Date) {
     const fecha =
@@ -739,6 +934,7 @@ function HistoriasClinicasPageInner() {
           setRespiratoryRate(n.respiratoryRate ?? "");
           setGlucose(n.glucose ?? "");
           setVisitDate(n.visitDate ?? toLocalISODate(new Date(n.createdAt)));
+          armAutosaveFromNote(n);
         } else {
           setEditingNoteId(null);
           setAttachments([]);
@@ -760,6 +956,7 @@ function HistoriasClinicasPageInner() {
           setRespiratoryRate("");
           setGlucose("");
           setVisitDate(toLocalISODate(new Date()));
+          armAutosaveFromNote({});
         }
       })
       .catch((err) => {
@@ -922,6 +1119,13 @@ function HistoriasClinicasPageInner() {
     }, 300);
   }
 
+  function handleRoleChange(role: ClinicalEditorRole) {
+    if (role === editorRole) return;
+    flushRoleAutosave();
+    saveClinicalEditorRole(role);
+    setEditorRole(role);
+  }
+
   async function handleSaveNote(e: React.FormEvent) {
     e.preventDefault();
     if (!selectedPatientId) {
@@ -934,6 +1138,10 @@ function HistoriasClinicasPageInner() {
       autosaveTimerRef.current = null;
     }
 
+    const roleKeys = fieldsForRole(editorRole);
+    const roleFields =
+      editorRole === "enfermeria" ? getEnfermeriaFields() : getDoctoraFields();
+
     setSaving(true);
     setError(null);
     try {
@@ -944,24 +1152,9 @@ function HistoriasClinicasPageInner() {
         body: JSON.stringify({
           id: editingNoteId ?? undefined,
           patientId: selectedPatientId,
-            visitDate,
-          consultationReason,
-          currentIllness,
-          physicalExam,
-          diagnostics,
-          diagnosis,
-          evolutionNotes,
-          nursingNotes,
-          treatmentNotes,
-          weight,
-          height,
-          bodyTemperature,
-          bloodPressure,
-          oxygenSaturation,
-          heartRate,
-          respiratoryRate,
-          glucose,
-          attachments,
+          visitDate,
+          ...roleFields,
+          ...(isEditing ? { attachments } : {}),
         }),
       });
       const txt = await res.text();
@@ -991,9 +1184,16 @@ function HistoriasClinicasPageInner() {
       const saved = payload as ClinicalNote;
       mergeSavedNoteInList(saved, isEditing);
       applySavedNoteToState(saved);
-      autosaveSnapshotRef.current = JSON.stringify(getAtencionAutosaveFields());
+      clearDirtyKeys(roleKeys);
+      autosaveSnapshotRef.current = JSON.stringify({
+        role: editorRole,
+        fields: roleFields,
+      });
       setAutosaveStatus("idle");
-      notifyVisitUpdated(selectedPatientId, saved.id);
+      notifyVisitUpdated(selectedPatientId, saved.id, {
+        updatedKeys: [...roleKeys],
+        role: editorRole,
+      });
     } catch (err) {
       console.error(err);
       setError("No se pudo guardar la historia clínica.");
@@ -1001,6 +1201,15 @@ function HistoriasClinicasPageInner() {
       setSaving(false);
     }
   }
+
+  const enfermeriaEditable = editorRole === "enfermeria";
+  const doctoraEditable = editorRole === "doctora";
+  const fieldClass = (editable: boolean) =>
+    "min-h-[60px] w-full rounded-lg border border-slate-300 px-3 py-2 text-sm " +
+    (editable ? "bg-white" : "cursor-default bg-slate-50 text-slate-700");
+  const inputClass = (editable: boolean) =>
+    "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm " +
+    (editable ? "bg-white" : "cursor-default bg-slate-50 text-slate-700");
 
   return (
     <main className="space-y-4 p-4 sm:p-6">
@@ -1112,9 +1321,11 @@ function HistoriasClinicasPageInner() {
         {selectedPatient && (
           <form
             onSubmit={handleSaveNote}
-            className="grid gap-3 border-t border-slate-200 pt-4 text-sm lg:grid-cols-2"
+            className="space-y-4 border-t border-slate-200 pt-4 text-sm"
           >
-            <div className="space-y-2">
+            <ClinicalRoleToggle role={editorRole} onChange={handleRoleChange} />
+
+            <div className="flex flex-wrap items-end justify-between gap-2">
               <div className="space-y-1">
                 <label className="text-xs text-slate-600">
                   Fecha de atención (ficha)
@@ -1123,156 +1334,252 @@ function HistoriasClinicasPageInner() {
                   type="date"
                   value={visitDate}
                   onChange={(e) => setVisitDate(e.target.value)}
-                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
                 />
               </div>
-              <div className="space-y-1">
-                <label className="text-xs text-slate-600">
-                  Motivo de consulta
-                </label>
-                <textarea
-                  className="min-h-[60px] w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
-                  value={consultationReason}
-                  onChange={(e) => setConsultationReason(e.target.value)}
-                  placeholder="Razón principal de la consulta actual"
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="text-xs text-slate-600">
-                  Historia de la enfermedad actual
-                </label>
-                <textarea
-                  className="min-h-[80px] w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
-                  value={currentIllness}
-                  onChange={(e) => setCurrentIllness(e.target.value)}
-                  placeholder="Descripción de síntomas, duración, factores desencadenantes…"
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="text-xs text-slate-600">Examen físico</label>
-                <textarea
-                  className="min-h-[60px] w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
-                  value={physicalExam}
-                  onChange={(e) => setPhysicalExam(e.target.value)}
-                  placeholder="Signos vitales y hallazgos relevantes"
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="text-xs text-slate-600">
-                  Notas de Enfermería
-                </label>
-                <textarea
-                  className="min-h-[60px] w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
-                  value={nursingNotes}
-                  onChange={(e) => setNursingNotes(e.target.value)}
-                  placeholder="Observaciones y evolución por enfermería…"
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="text-xs text-slate-600">
-                  Notas de tratamiento
-                </label>
-                <textarea
-                  className="min-h-[60px] w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
-                  value={treatmentNotes}
-                  onChange={(e) => setTreatmentNotes(e.target.value)}
-                  placeholder="Respuesta al tratamiento, indicaciones, etc…"
-                />
-              </div>
+              {autosaveStatus !== "idle" && (
+                <span
+                  className={`text-[11px] ${
+                    autosaveStatus === "error"
+                      ? "text-red-600"
+                      : autosaveStatus === "saved"
+                        ? "text-emerald-700"
+                        : "text-slate-500"
+                  }`}
+                >
+                  {autosaveStatus === "pending" && "Guardando en breve…"}
+                  {autosaveStatus === "saving" && "Guardando automáticamente…"}
+                  {autosaveStatus === "saved" && "Guardado · misma ficha compartida"}
+                  {autosaveStatus === "error" &&
+                    "No se pudo guardar automáticamente"}
+                </span>
+              )}
             </div>
 
-            <div className="space-y-2">
-              <div className="space-y-1">
-                <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="grid gap-4 lg:grid-cols-2">
+              {/* —— Enfermería —— */}
+              <section
+                className={
+                  "space-y-3 rounded-xl border p-3 " +
+                  (enfermeriaEditable
+                    ? "border-teal-300 bg-teal-50/40"
+                    : "border-slate-200 bg-slate-50/60")
+                }
+              >
+                <div>
+                  <h3 className="text-sm font-semibold text-teal-900">
+                    Enfermería
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    {enfermeriaEditable
+                      ? "Puedes editar esta sección. Se guarda sola (~2 s) y no sobrescribe lo de la doctora."
+                      : "Solo lectura en este dispositivo. Cambia el rol a Enfermería para escribir aquí."}
+                  </p>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs text-slate-600">
+                    Motivo de consulta
+                  </label>
+                  <textarea
+                    className={fieldClass(enfermeriaEditable)}
+                    value={consultationReason}
+                    readOnly={!enfermeriaEditable}
+                    onChange={(e) => {
+                      markDirty("consultationReason");
+                      setConsultationReason(e.target.value);
+                    }}
+                    onBlur={() => enfermeriaEditable && flushRoleAutosave()}
+                    placeholder="Razón principal de la consulta actual"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs text-slate-600">
+                    Notas de Enfermería
+                  </label>
+                  <textarea
+                    className={fieldClass(enfermeriaEditable)}
+                    value={nursingNotes}
+                    readOnly={!enfermeriaEditable}
+                    onChange={(e) => {
+                      markDirty("nursingNotes");
+                      setNursingNotes(e.target.value);
+                    }}
+                    onBlur={() => enfermeriaEditable && flushRoleAutosave()}
+                    placeholder="Observaciones y evolución por enfermería…"
+                  />
+                </div>
+                <div className="space-y-1">
                   <label className="text-xs text-slate-600">Signos vitales</label>
-                  {autosaveStatus !== "idle" && (
-                    <span
-                      className={`text-[11px] ${
-                        autosaveStatus === "error"
-                          ? "text-red-600"
-                          : autosaveStatus === "saved"
-                            ? "text-emerald-700"
-                            : "text-slate-500"
-                      }`}
-                    >
-                      {autosaveStatus === "pending" && "Guardando en breve…"}
-                      {autosaveStatus === "saving" && "Guardando automáticamente…"}
-                      {autosaveStatus === "saved" &&
-                        "Guardado · visible en Registro de atenciones"}
-                      {autosaveStatus === "error" &&
-                        "No se pudo guardar automáticamente"}
-                    </span>
-                  )}
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    {(
+                      [
+                        ["weight", weight, setWeight, "Peso (ej. 72 kg)"],
+                        ["height", height, setHeight, "Talla (ej. 1.68 m)"],
+                        [
+                          "bodyTemperature",
+                          bodyTemperature,
+                          setBodyTemperature,
+                          "Temperatura (ej. 36.7 °C)",
+                        ],
+                        [
+                          "bloodPressure",
+                          bloodPressure,
+                          setBloodPressure,
+                          "Presión arterial (ej. 120/80)",
+                        ],
+                        [
+                          "oxygenSaturation",
+                          oxygenSaturation,
+                          setOxygenSaturation,
+                          "Saturación (ej. 98%)",
+                        ],
+                        [
+                          "heartRate",
+                          heartRate,
+                          setHeartRate,
+                          "Frecuencia cardíaca (ej. 72 lpm)",
+                        ],
+                        [
+                          "respiratoryRate",
+                          respiratoryRate,
+                          setRespiratoryRate,
+                          "Frecuencia respiratoria (ej. 18 rpm)",
+                        ],
+                        ["glucose", glucose, setGlucose, "Glucosa (ej. 95 mg/dL)"],
+                      ] as const
+                    ).map(([key, value, setter, placeholder]) => (
+                      <input
+                        key={key}
+                        className={inputClass(enfermeriaEditable)}
+                        placeholder={placeholder}
+                        value={value}
+                        readOnly={!enfermeriaEditable}
+                        onChange={(e) => {
+                          markDirty(key);
+                          setter(e.target.value);
+                        }}
+                        onBlur={() => enfermeriaEditable && flushRoleAutosave()}
+                      />
+                    ))}
+                  </div>
                 </div>
-                <p className="text-[11px] text-slate-500">
-                  Motivo de consulta, notas de enfermería y signos vitales se
-                  guardan solos al escribir y aparecen en Registro de atenciones
-                  sin recargar la página.
-                </p>
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  <input
-                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
-                    placeholder="Peso (ej. 72 kg)"
-                    value={weight}
-                    onChange={(e) => setWeight(e.target.value)}
-                  />
-                  <input
-                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
-                    placeholder="Talla (ej. 1.68 m)"
-                    value={height}
-                    onChange={(e) => setHeight(e.target.value)}
-                  />
-                  <input
-                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
-                    placeholder="Temperatura (ej. 36.7 °C)"
-                    value={bodyTemperature}
-                    onChange={(e) => setBodyTemperature(e.target.value)}
-                  />
-                  <input
-                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
-                    placeholder="Presión arterial (ej. 120/80)"
-                    value={bloodPressure}
-                    onChange={(e) => setBloodPressure(e.target.value)}
-                  />
-                  <input
-                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
-                    placeholder="Saturación (ej. 98%)"
-                    value={oxygenSaturation}
-                    onChange={(e) => setOxygenSaturation(e.target.value)}
-                  />
-                  <input
-                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
-                    placeholder="Frecuencia cardíaca (ej. 72 lpm)"
-                    value={heartRate}
-                    onChange={(e) => setHeartRate(e.target.value)}
-                  />
-                  <input
-                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
-                    placeholder="Frecuencia respiratoria (ej. 18 rpm)"
-                    value={respiratoryRate}
-                    onChange={(e) => setRespiratoryRate(e.target.value)}
-                  />
-                  <input
-                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
-                    placeholder="Glucosa (ej. 95 mg/dL)"
-                    value={glucose}
-                    onChange={(e) => setGlucose(e.target.value)}
-                  />
-                </div>
-              </div>
-              <div className="space-y-1">
-                <label className="text-xs text-slate-600">
-                  Evolución / notas de progreso
-                </label>
-                <textarea
-                  className="min-h-[60px] w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
-                  value={evolutionNotes}
-                  onChange={(e) => setEvolutionNotes(e.target.value)}
-                  placeholder="Cambios en la condición, respuesta al tratamiento…"
-                />
-              </div>
+              </section>
 
-              <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50/80 p-3">
+              {/* —— Doctora —— */}
+              <section
+                className={
+                  "space-y-3 rounded-xl border p-3 " +
+                  (doctoraEditable
+                    ? "border-amber-300 bg-amber-50/50"
+                    : "border-slate-200 bg-slate-50/60")
+                }
+              >
+                <div>
+                  <h3 className="text-sm font-semibold text-amber-900">
+                    Doctora
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    {doctoraEditable
+                      ? "Puedes editar esta sección. Se guarda sola (~2 s) y no sobrescribe lo de enfermería."
+                      : "Solo lectura en este dispositivo. Cambia el rol a Doctora para escribir aquí."}
+                  </p>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs text-slate-600">
+                    Historia de la enfermedad actual
+                  </label>
+                  <textarea
+                    className={fieldClass(doctoraEditable) + " min-h-[80px]"}
+                    value={currentIllness}
+                    readOnly={!doctoraEditable}
+                    onChange={(e) => {
+                      markDirty("currentIllness");
+                      setCurrentIllness(e.target.value);
+                    }}
+                    onBlur={() => doctoraEditable && flushRoleAutosave()}
+                    placeholder="Descripción de síntomas, duración, factores desencadenantes…"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs text-slate-600">Examen físico</label>
+                  <textarea
+                    className={fieldClass(doctoraEditable)}
+                    value={physicalExam}
+                    readOnly={!doctoraEditable}
+                    onChange={(e) => {
+                      markDirty("physicalExam");
+                      setPhysicalExam(e.target.value);
+                    }}
+                    onBlur={() => doctoraEditable && flushRoleAutosave()}
+                    placeholder="Hallazgos relevantes del examen"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs text-slate-600">
+                    Resultados de pruebas / estudios
+                  </label>
+                  <textarea
+                    className={fieldClass(doctoraEditable)}
+                    value={diagnostics}
+                    readOnly={!doctoraEditable}
+                    onChange={(e) => {
+                      markDirty("diagnostics");
+                      setDiagnostics(e.target.value);
+                    }}
+                    onBlur={() => doctoraEditable && flushRoleAutosave()}
+                    placeholder="Resultados de laboratorio, imágenes…"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs text-slate-600">Diagnóstico</label>
+                  <textarea
+                    className={fieldClass(doctoraEditable)}
+                    value={diagnosis}
+                    readOnly={!doctoraEditable}
+                    onChange={(e) => {
+                      markDirty("diagnosis");
+                      setDiagnosis(e.target.value);
+                    }}
+                    onBlur={() => doctoraEditable && flushRoleAutosave()}
+                    placeholder="Diagnóstico clínico"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs text-slate-600">
+                    Notas de tratamiento
+                  </label>
+                  <textarea
+                    className={fieldClass(doctoraEditable)}
+                    value={treatmentNotes}
+                    readOnly={!doctoraEditable}
+                    onChange={(e) => {
+                      markDirty("treatmentNotes");
+                      setTreatmentNotes(e.target.value);
+                    }}
+                    onBlur={() => doctoraEditable && flushRoleAutosave()}
+                    placeholder="Respuesta al tratamiento, indicaciones, etc…"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs text-slate-600">
+                    Evolución / notas de progreso
+                  </label>
+                  <textarea
+                    className={fieldClass(doctoraEditable)}
+                    value={evolutionNotes}
+                    readOnly={!doctoraEditable}
+                    onChange={(e) => {
+                      markDirty("evolutionNotes");
+                      setEvolutionNotes(e.target.value);
+                    }}
+                    onBlur={() => doctoraEditable && flushRoleAutosave()}
+                    placeholder="Cambios en la condición, respuesta al tratamiento…"
+                  />
+                </div>
+              </section>
+            </div>
+
+            <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50/80 p-3">
                 <label className="text-xs font-semibold text-slate-700">
                   Archivos adjuntos
                 </label>
@@ -1388,6 +1695,7 @@ function HistoriasClinicasPageInner() {
                       setRespiratoryRate("");
                       setGlucose("");
                       setVisitDate(toLocalISODate(new Date()));
+                      armAutosaveFromNote({});
                     }}
                     className="rounded border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100"
                   >
@@ -1402,14 +1710,13 @@ function HistoriasClinicasPageInner() {
                   {saving
                     ? "Guardando…"
                     : editingNoteId
-                    ? "Actualizar nota clínica"
-                    : "Guardar nota clínica"}
+                    ? `Actualizar sección ${editorRole === "enfermeria" ? "de enfermería" : "de la doctora"}`
+                    : `Guardar ficha (${editorRole === "enfermeria" ? "enfermería" : "doctora"})`}
                 </button>
               </div>
-            </div>
 
             {error && (
-              <div className="col-span-full text-xs text-red-600">{error}</div>
+              <div className="text-xs text-red-600">{error}</div>
             )}
           </form>
         )}
@@ -1507,6 +1814,7 @@ function HistoriasClinicasPageInner() {
                         setVisitDate(
                           n.visitDate ?? toLocalISODate(new Date(n.createdAt)),
                         );
+                        armAutosaveFromNote(n);
                       }}
                       className={
                         isActive
@@ -1612,6 +1920,7 @@ function HistoriasClinicasPageInner() {
                         setVisitDate(
                           n.visitDate ?? toLocalISODate(new Date(n.createdAt)),
                         );
+                        armAutosaveFromNote(n);
                       }}
                       className="rounded border border-slate-300 bg-white px-2 py-0.5 text-[10px] font-semibold text-slate-700 hover:bg-slate-100"
                     >

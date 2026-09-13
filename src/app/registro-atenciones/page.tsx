@@ -16,8 +16,15 @@ import {
   clinicalAttachmentSizeErrorMessage,
   isClinicalAttachmentOverLimit,
 } from "@/lib/clinical-attachment-limits";
-import { subscribeVisitUpdated } from "@/lib/clinical-visit-sync";
+import { notifyVisitUpdated, subscribeVisitUpdated } from "@/lib/clinical-visit-sync";
 import DateRangeFilter from "@/components/date-range-filter";
+import ClinicalRoleToggle from "@/components/clinical-role-toggle";
+import {
+  ENFERMERIA_FIELD_KEYS,
+  loadClinicalEditorRole,
+  saveClinicalEditorRole,
+  type ClinicalEditorRole,
+} from "@/lib/clinical-roles";
 import { buildDateRangeQuery, toLocalISODate } from "@/lib/date-range";
 
 type RegistroRow = {
@@ -142,6 +149,8 @@ const ATENCION_SYNC_KEYS = [
   "glucose",
 ] as const;
 
+const REGISTRO_AUTOSAVE_MS = 2000;
+
 function RegistroAtencionesPageInner() {
   const searchParams = useSearchParams();
   const highlightVisitId = searchParams.get("visitId");
@@ -175,6 +184,22 @@ function RegistroAtencionesPageInner() {
   const [uploadMsg, setUploadMsg] = useState<string | null>(null);
   const pendingDriveIdsRef = useRef<Set<string>>(new Set());
   const visitCacheRef = useRef<Map<string, Record<string, unknown>>>(new Map());
+  const draftDirtyRef = useRef(false);
+  const dirtyKeysRef = useRef<Set<string>>(new Set());
+  const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autosaveInFlightRef = useRef(false);
+  const [autosaveStatus, setAutosaveStatus] = useState<
+    "idle" | "pending" | "saving" | "saved" | "error"
+  >("idle");
+  const [editorRole, setEditorRole] = useState<ClinicalEditorRole>("enfermeria");
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+
+  useEffect(() => {
+    setEditorRole(loadClinicalEditorRole());
+  }, []);
+
+  const enfermeriaEditable = editorRole === "enfermeria";
 
   const loadVisitDetail = useCallback(
     async (patientId: string, visitId: string) => {
@@ -236,6 +261,8 @@ function RegistroAtencionesPageInner() {
       setDraft((prev) => {
         const next = { ...prev };
         for (const key of ATENCION_SYNC_KEYS) {
+          // No pisar lo que se está tipando en este dispositivo.
+          if (dirtyKeysRef.current.has(key)) continue;
           next[key] = fromServer[key];
         }
         return next;
@@ -245,6 +272,116 @@ function RegistroAtencionesPageInner() {
       // sincronización en segundo plano
     }
   }, [selectedId, visitPatientId, saving]);
+
+  const runRegistroAutosave = useCallback(async () => {
+    if (
+      !selectedId ||
+      !visitPatientId ||
+      saving ||
+      autosaveInFlightRef.current ||
+      !draftDirtyRef.current ||
+      !enfermeriaEditable
+    ) {
+      return;
+    }
+    autosaveInFlightRef.current = true;
+    setAutosaveStatus("saving");
+    const current = draftRef.current;
+    try {
+      const res = await fetch("/api/clinical-notes", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: selectedId,
+          patientId: visitPatientId,
+          consultationReason: current.consultationReason,
+          nursingNotes: current.nursingNotes,
+          weight: current.weight,
+          height: current.height,
+          bodyTemperature: current.bodyTemperature,
+          bloodPressure: current.bloodPressure,
+          oxygenSaturation: current.oxygenSaturation,
+          heartRate: current.heartRate,
+          respiratoryRate: current.respiratoryRate,
+          glucose: current.glucose,
+        }),
+        keepalive: true,
+      });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) {
+        setAutosaveStatus("error");
+        return;
+      }
+      draftDirtyRef.current = false;
+      for (const k of ENFERMERIA_FIELD_KEYS) dirtyKeysRef.current.delete(k);
+      if (payload && typeof payload === "object") {
+        visitCacheRef.current.set(
+          `${visitPatientId}:${selectedId}`,
+          payload as Record<string, unknown>,
+        );
+      }
+      notifyVisitUpdated(visitPatientId, selectedId, {
+        updatedKeys: [...ENFERMERIA_FIELD_KEYS],
+        role: "enfermeria",
+      });
+      setAutosaveStatus("saved");
+      window.setTimeout(() => setAutosaveStatus("idle"), 2500);
+    } catch {
+      setAutosaveStatus("error");
+    } finally {
+      autosaveInFlightRef.current = false;
+    }
+  }, [selectedId, visitPatientId, saving, enfermeriaEditable]);
+
+  const handleRoleChange = useCallback(
+    (role: ClinicalEditorRole) => {
+      if (role === editorRole) return;
+      if (autosaveTimerRef.current) {
+        clearTimeout(autosaveTimerRef.current);
+        autosaveTimerRef.current = null;
+      }
+      void runRegistroAutosave();
+      saveClinicalEditorRole(role);
+      setEditorRole(role);
+    },
+    [editorRole, runRegistroAutosave],
+  );
+
+  const scheduleRegistroAutosave = useCallback(() => {
+    draftDirtyRef.current = true;
+    setAutosaveStatus("pending");
+    if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+    autosaveTimerRef.current = setTimeout(() => {
+      void runRegistroAutosave();
+    }, REGISTRO_AUTOSAVE_MS);
+  }, [runRegistroAutosave]);
+
+  useEffect(() => {
+    const onHide = () => {
+      if (document.visibilityState === "hidden") {
+        if (autosaveTimerRef.current) {
+          clearTimeout(autosaveTimerRef.current);
+          autosaveTimerRef.current = null;
+        }
+        void runRegistroAutosave();
+      }
+    };
+    const onPageHide = () => {
+      if (autosaveTimerRef.current) {
+        clearTimeout(autosaveTimerRef.current);
+        autosaveTimerRef.current = null;
+      }
+      void runRegistroAutosave();
+    };
+    document.addEventListener("visibilitychange", onHide);
+    window.addEventListener("pagehide", onPageHide);
+    return () => {
+      document.removeEventListener("visibilitychange", onHide);
+      window.removeEventListener("pagehide", onPageHide);
+      if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+      void runRegistroAutosave();
+    };
+  }, [runRegistroAutosave]);
 
   useEffect(() => {
     void loadList();
@@ -263,7 +400,8 @@ function RegistroAtencionesPageInner() {
       }
     });
 
-    // Sin polling periódico: solo al volver a la pestaña o aviso entre ventanas.
+    // Entre dispositivos BroadcastChannel no llega: también refrescar cada ~12 s.
+    const interval = window.setInterval(sync, 12000);
     const onVisibility = () => {
       if (document.visibilityState === "visible") sync();
     };
@@ -271,6 +409,7 @@ function RegistroAtencionesPageInner() {
 
     return () => {
       unsub();
+      window.clearInterval(interval);
       document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [selectedId, visitPatientId, tab, refreshSelectedVisit]);
@@ -364,10 +503,19 @@ function RegistroAtencionesPageInner() {
   }, [rows, filterText]);
 
   async function selectRow(r: RegistroRow) {
+    if (draftDirtyRef.current) {
+      if (autosaveTimerRef.current) {
+        clearTimeout(autosaveTimerRef.current);
+        autosaveTimerRef.current = null;
+      }
+      await runRegistroAutosave();
+    }
     setSelectedId(r.visitId);
     setVisitPatientId(r.patientId);
     setTab("atencion");
     setSaveMsg(null);
+    draftDirtyRef.current = false;
+    dirtyKeysRef.current.clear();
     setVisitLoading(true);
     try {
       const visit = await loadVisitDetail(r.patientId, r.visitId);
@@ -385,6 +533,11 @@ function RegistroAtencionesPageInner() {
 
   function setField(key: string, value: string) {
     setDraft((prev) => ({ ...prev, [key]: value || null }));
+    if ((ATENCION_SYNC_KEYS as readonly string[]).includes(key)) {
+      if (!enfermeriaEditable) return;
+      dirtyKeysRef.current.add(key);
+      scheduleRegistroAutosave();
+    }
   }
 
   async function handleCopyAttachmentLink(link: string | null) {
@@ -471,21 +624,24 @@ function RegistroAtencionesPageInner() {
         body: JSON.stringify({
           id: selectedId,
           patientId: visitPatientId,
+          // No enviar diagnostics/treatmentPlan: son de la doctora.
           identificationExtra: draft.identificationExtra,
           personalHistory: draft.personalHistory,
           familyHistory: draft.familyHistory,
-          consultationReason: draft.consultationReason,
-          diagnostics: draft.diagnostics,
-          treatmentPlan: draft.treatmentPlan,
-          nursingNotes: draft.nursingNotes,
-          weight: draft.weight,
-          height: draft.height,
-          bodyTemperature: draft.bodyTemperature,
-          bloodPressure: draft.bloodPressure,
-          oxygenSaturation: draft.oxygenSaturation,
-          heartRate: draft.heartRate,
-          respiratoryRate: draft.respiratoryRate,
-          glucose: draft.glucose,
+          ...(enfermeriaEditable
+            ? {
+                consultationReason: draft.consultationReason,
+                nursingNotes: draft.nursingNotes,
+                weight: draft.weight,
+                height: draft.height,
+                bodyTemperature: draft.bodyTemperature,
+                bloodPressure: draft.bloodPressure,
+                oxygenSaturation: draft.oxygenSaturation,
+                heartRate: draft.heartRate,
+                respiratoryRate: draft.respiratoryRate,
+                glucose: draft.glucose,
+              }
+            : {}),
           procedureName: draft.procedureName,
           procedureNote: draft.procedureNote,
           auxiliaryExams: draft.auxiliaryExams,
@@ -503,6 +659,9 @@ function RegistroAtencionesPageInner() {
         return;
       }
       setSaveMsg("Cambios guardados.");
+      draftDirtyRef.current = false;
+      dirtyKeysRef.current.clear();
+      setAutosaveStatus("idle");
       const saved = payload as { attachments?: ClinicalAttachment[] };
       if (Array.isArray(saved.attachments)) {
         setAttachments(saved.attachments);
@@ -514,6 +673,10 @@ function RegistroAtencionesPageInner() {
           payload as Record<string, unknown>,
         );
       }
+      notifyVisitUpdated(visitPatientId, selectedId, {
+        updatedKeys: [...ENFERMERIA_FIELD_KEYS],
+        role: editorRole,
+      });
       await loadList();
     } finally {
       setSaving(false);
@@ -802,11 +965,25 @@ function RegistroAtencionesPageInner() {
 
               {tab === "atencion" && (
                 <div className="space-y-3">
-                  <p className="text-xs text-slate-500">
-                    Motivo de consulta y signos vitales. Se guarda en la misma ficha
-                    que en Historias clínicas. Los valores guardados en Historias se
-                    actualizan aquí automáticamente.
-                  </p>
+                  <ClinicalRoleToggle
+                    role={editorRole}
+                    onChange={handleRoleChange}
+                  />
+                  <div className="rounded-xl border border-teal-200 bg-teal-50/40 p-3">
+                    <p className="text-xs font-semibold text-teal-900">
+                      Sección Enfermería
+                    </p>
+                    <p className="mt-0.5 text-[11px] text-slate-500">
+                      Misma ficha que en Historias.{" "}
+                      {enfermeriaEditable
+                        ? "Se guarda sola al escribir y no borra lo que escribe la doctora en su sección."
+                        : "Solo lectura: cambia el rol a Enfermería para editar, o abre Historias con rol Doctora."}
+                      {autosaveStatus === "pending" && " · Guardando en breve…"}
+                      {autosaveStatus === "saving" && " · Guardando…"}
+                      {autosaveStatus === "saved" && " · Guardado"}
+                      {autosaveStatus === "error" && " · Error al guardar"}
+                    </p>
+                  </div>
                   {(
                     [
                       ["consultationReason", "Motivo de consulta"],
@@ -816,8 +993,14 @@ function RegistroAtencionesPageInner() {
                     <label key={key} className="block text-xs">
                       <span className="font-medium text-slate-700">{label}</span>
                       <textarea
-                        className="mt-1 min-h-[72px] w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                        className={
+                          "mt-1 min-h-[72px] w-full rounded-lg border border-slate-300 px-3 py-2 text-sm " +
+                          (enfermeriaEditable
+                            ? "bg-white"
+                            : "cursor-default bg-slate-50 text-slate-700")
+                        }
                         value={draft[key] ?? ""}
+                        readOnly={!enfermeriaEditable}
                         onChange={(e) => setField(key, e.target.value)}
                       />
                     </label>
@@ -838,8 +1021,14 @@ function RegistroAtencionesPageInner() {
                       <label key={key} className="text-xs">
                         <span className="font-medium text-slate-700">{label}</span>
                         <input
-                          className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                          className={
+                            "mt-1 w-full rounded border border-slate-300 px-2 py-1.5 text-sm " +
+                            (enfermeriaEditable
+                              ? "bg-white"
+                              : "cursor-default bg-slate-50 text-slate-700")
+                          }
                           value={draft[key] ?? ""}
+                          readOnly={!enfermeriaEditable}
                           onChange={(e) => setField(key, e.target.value)}
                         />
                       </label>

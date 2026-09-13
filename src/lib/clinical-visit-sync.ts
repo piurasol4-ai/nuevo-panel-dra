@@ -3,13 +3,25 @@ const CHANNEL_NAME = "harmonia-clinical-visit";
 export type ClinicalVisitSyncMessage = {
   patientId: string;
   visitId: string;
+  /** Campos tocados en este guardado (para no pisar otros en el otro dispositivo). */
+  updatedKeys?: string[];
+  role?: "enfermeria" | "doctora" | "unknown";
 };
 
-/** Avisa a otras pestañas (p. ej. Registro de atenciones) que la ficha cambió. */
-export function notifyVisitUpdated(patientId: string, visitId: string) {
+/** Avisa a otras pestañas/dispositivos del mismo navegador que la ficha cambió. */
+export function notifyVisitUpdated(
+  patientId: string,
+  visitId: string,
+  meta?: { updatedKeys?: string[]; role?: ClinicalVisitSyncMessage["role"] },
+) {
   if (typeof window === "undefined" || !("BroadcastChannel" in window)) return;
   const channel = new BroadcastChannel(CHANNEL_NAME);
-  channel.postMessage({ patientId, visitId } satisfies ClinicalVisitSyncMessage);
+  channel.postMessage({
+    patientId,
+    visitId,
+    updatedKeys: meta?.updatedKeys,
+    role: meta?.role ?? "unknown",
+  } satisfies ClinicalVisitSyncMessage);
   channel.close();
 }
 
