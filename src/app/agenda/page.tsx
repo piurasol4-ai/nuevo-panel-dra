@@ -10,10 +10,17 @@ import { useSearchParams } from "next/navigation";
 import "react-datepicker/dist/react-datepicker.css";
 
 import { formatPatientDocument } from "@/lib/patient-document";
+import {
+  appointmentProcedures,
+  proceduresLabel,
+} from "@/lib/appointment-procedures";
 
 registerLocale("es", es);
 
-type AppointmentWithPatient = Appointment & { patient: Patient };
+type AppointmentWithPatient = Appointment & {
+  patient: Patient;
+  procedures?: unknown;
+};
 
 function safeJsonParse<T>(text: string, fallback: T): T {
   if (!text) return fallback;
@@ -34,7 +41,8 @@ function AgendaPageInner() {
   const [patientQuery, setPatientQuery] = useState("");
   const [patientInputFocused, setPatientInputFocused] = useState(false);
   const [patientHighlightIndex, setPatientHighlightIndex] = useState<number>(-1);
-  const [procedure, setProcedure] = useState("");
+  const [procedureNames, setProcedureNames] = useState<string[]>([]);
+  const [procedureToAdd, setProcedureToAdd] = useState("");
   const [startTime, setStartTime] = useState("09:00");
   const [endTime, setEndTime] = useState("09:30");
   const [appointmentFormDate, setAppointmentFormDate] = useState<Date>(
@@ -238,7 +246,8 @@ function AgendaPageInner() {
     const now = new Date();
     setEditingId(null);
     setPatientId(patientIdFromQuery);
-    setProcedure("");
+    setProcedureNames([]);
+    setProcedureToAdd("");
     setShowForm(true);
     // También alineamos el calendario al "día de hoy".
     setSelectedDate(now);
@@ -327,7 +336,7 @@ function AgendaPageInner() {
         })
       : "";
 
-    const procedure = appt.type ? String(appt.type) : "Consulta médica";
+    const procedure = proceduresLabel(appointmentProcedures(appt));
 
     const texto = `le recordamos su cita médica para el ${dateText} a las ${time} (${procedure}).`;
     const fullMessage = `Hamonia CenterH., Buen día: Sr(a) ${patient.fullName} le hacemos saber que: ${texto}`;
@@ -352,8 +361,8 @@ function AgendaPageInner() {
       setFormError("Selecciona un paciente.");
       return;
     }
-    if (!procedure) {
-      setFormError("Selecciona un procedimiento de la lista de precios.");
+    if (procedureNames.length === 0) {
+      setFormError("Agrega al menos un procedimiento de la lista de precios.");
       return;
     }
 
@@ -408,7 +417,8 @@ function AgendaPageInner() {
         patientId,
         startAt: startAt.toISOString(),
         endAt: endAt.toISOString(),
-        type: procedure,
+        type: proceduresLabel(procedureNames),
+        procedures: procedureNames,
         status: "pendiente",
         reason: reason || null,
       }),
@@ -456,7 +466,8 @@ function AgendaPageInner() {
     setShowForm(false);
     setPatientId("");
     setPatientQuery("");
-    setProcedure("");
+    setProcedureNames([]);
+    setProcedureToAdd("");
     setStartTime("09:00");
     setEndTime("09:30");
     setReason("");
@@ -588,7 +599,7 @@ function AgendaPageInner() {
             id: visitId,
             patientId: a.patientId,
             appointmentId: a.id,
-            procedureName: a.type || null,
+            procedureName: proceduresLabel(appointmentProcedures(a)) || null,
             consultationReason: a.reason || null,
           }),
         });
@@ -603,7 +614,7 @@ function AgendaPageInner() {
             appointmentId: a.id,
             createdAt: createdAtIso,
             consultationReason: a.reason || null,
-            procedureName: a.type || null,
+            procedureName: proceduresLabel(appointmentProcedures(a)) || null,
           }),
         });
         const payload = (await postRes.json().catch(() => null)) as
@@ -639,13 +650,17 @@ function AgendaPageInner() {
     setTicketAppointment(a);
     setTicketDateISO(dateISO);
 
-    const procName = a.type || "CONSULTA MEDICA";
+    const selected = appointmentProcedures(a);
+    const procName =
+      proceduresLabel(selected) || "CONSULTA MEDICA";
     setTicketProcedureName(procName);
 
-    const proc = procedures.find(
-      (p) => p.name.toLowerCase() === String(procName).toLowerCase(),
-    );
-    const unitPrice = proc ? parseSolesToNumber(proc.price) ?? 0 : 0;
+    const unitPrice = selected.reduce((sum, name) => {
+      const proc = procedures.find(
+        (p) => p.name.toLowerCase() === name.toLowerCase(),
+      );
+      return sum + (proc ? parseSolesToNumber(proc.price) ?? 0 : 0);
+    }, 0);
     setTicketProcedureUnitPriceSoles(unitPrice);
 
     // Por defecto, colocamos el total del procedimiento en Efectivo.
@@ -1281,6 +1296,9 @@ function AgendaPageInner() {
           type="button"
           onClick={() => {
             loadProceduresFromStorage();
+            setEditingId(null);
+            setProcedureNames([]);
+            setProcedureToAdd("");
             setShowForm(true);
             setPatientQuery("");
             setAppointmentFormDate(selectedDate);
@@ -1338,11 +1356,19 @@ function AgendaPageInner() {
                       })}{" "}
                       · {a.patient.fullName}
                     </p>
-                    {a.type && a.type !== "Consulta" && (
+                    {(() => {
+                      const names = appointmentProcedures(a);
+                      if (names.length === 0) return null;
+                      return (
                       <p className="text-xs text-slate-700">
-                        Procedimiento: <span className="font-semibold">{a.type}</span>
+                        Procedimiento
+                        {names.length > 1 ? "s" : ""}:{" "}
+                        <span className="font-semibold">
+                          {proceduresLabel(names)}
+                        </span>
                       </p>
-                    )}
+                      );
+                    })()}
                     {a.reason && (
                       <p className="text-xs text-slate-600">
                         Observaciones: {a.reason}
@@ -1399,7 +1425,8 @@ function AgendaPageInner() {
                         onClick={() => {
                           setEditingId(a.id);
                           setPatientId(a.patientId);
-                          setProcedure(a.type || "");
+                          setProcedureNames(appointmentProcedures(a));
+                          setProcedureToAdd("");
                           const dt = new Date(a.startAt);
                           setAppointmentFormDate(
                             new Date(dt.getFullYear(), dt.getMonth(), dt.getDate()),
@@ -1565,30 +1592,77 @@ function AgendaPageInner() {
               </div>
               <div className="space-y-1 text-sm">
                 <label className="block text-xs text-slate-600">
-                  Procedimiento (lista de precios)
+                  Procedimientos (lista de precios)
                 </label>
-                <select
-                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
-                  value={procedure}
-                  onChange={(e) => setProcedure(e.target.value)}
-                >
-                  <option value="">Selecciona un procedimiento…</option>
-                  {procedures.map((p, idx) => (
-                    <option key={`${p.name}-${idx}`} value={p.name}>
-                      {p.name} {p.price ? `· ${p.price}` : ""}
-                    </option>
-                  ))}
-                </select>
+                {procedureNames.length > 0 && (
+                  <ul className="space-y-1 rounded-lg border border-slate-200 bg-slate-50 p-2">
+                    {procedureNames.map((name) => (
+                      <li
+                        key={name}
+                        className="flex items-center justify-between gap-2 text-xs"
+                      >
+                        <span className="font-medium text-slate-800">{name}</span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setProcedureNames((prev) =>
+                              prev.filter((n) => n !== name),
+                            )
+                          }
+                          className="rounded border border-slate-300 bg-white px-2 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-100"
+                        >
+                          Quitar
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <div className="flex gap-2">
+                  <select
+                    className="min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                    value={procedureToAdd}
+                    onChange={(e) => setProcedureToAdd(e.target.value)}
+                  >
+                    <option value="">Agregar procedimiento…</option>
+                    {procedures
+                      .filter(
+                        (p) =>
+                          !procedureNames.some(
+                            (n) => n.toLowerCase() === p.name.toLowerCase(),
+                          ),
+                      )
+                      .map((p, idx) => (
+                        <option key={`${p.name}-${idx}`} value={p.name}>
+                          {p.name} {p.price ? `· ${p.price}` : ""}
+                        </option>
+                      ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const name = procedureToAdd.trim();
+                      if (!name) return;
+                      setProcedureNames((prev) =>
+                        prev.some((n) => n.toLowerCase() === name.toLowerCase())
+                          ? prev
+                          : [...prev, name],
+                      );
+                      setProcedureToAdd("");
+                    }}
+                    disabled={!procedureToAdd}
+                    className="rounded border border-amber-500 bg-amber-500 px-3 py-2 text-xs font-semibold text-white hover:bg-amber-600 disabled:opacity-50"
+                  >
+                    Agregar
+                  </button>
+                </div>
                 <p className="text-[11px] text-slate-500">
-                  Fuente:{" "}
+                  Puedes agregar varios (ej. hidrocolon y ozonoterapia). Fuente:{" "}
                   <span className="font-semibold">
                     {proceduresSource === "lista-precios"
                       ? "Lista de precios (guardada)"
                       : "Respaldo (temporal)"}
                   </span>
-                  . Si editas la{" "}
-                  <span className="font-semibold">Lista de precios</span>, vuelve a
-                  abrir este formulario para actualizar la lista.
+                  .
                 </p>
                 {proceduresSource === "respaldo" && (
                   <p className="text-[11px] text-amber-700">

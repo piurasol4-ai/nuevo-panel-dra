@@ -10,6 +10,9 @@ export type PatientNameEntry = {
   documentType?: string;
   dni: string;
   registeredAt?: string | null;
+  /** Clave única en listas (p. ej. varias sesiones del mismo paciente). */
+  rowKey?: string;
+  dateLabel?: string;
 };
 
 type PatientNamesDialogProps = {
@@ -71,8 +74,8 @@ export default function PatientNamesDialog({
             </p>
           ) : (
             <ul className="divide-y divide-slate-100">
-              {sorted.map((p) => (
-                <li key={p.id} className="px-2 py-2.5">
+              {sorted.map((p, idx) => (
+                <li key={p.rowKey ?? `${p.id}-${idx}`} className="px-2 py-2.5">
                   <div className="flex flex-wrap items-baseline justify-between gap-2">
                     <Link
                       href={`/historias?patientId=${encodeURIComponent(p.id)}`}
@@ -88,12 +91,17 @@ export default function PatientNamesDialog({
                       } as { documentType: string; dni: string })}
                     </span>
                   </div>
-                  {p.registeredAt && (
+                  {(p.dateLabel || p.registeredAt) && (
                     <p className="mt-0.5 text-[11px] text-slate-400">
-                      Registrado:{" "}
-                      {new Date(p.registeredAt).toLocaleDateString("es-PE", {
-                        dateStyle: "medium",
-                      })}
+                      {p.dateLabel
+                        ? p.dateLabel
+                        : `Registrado: ${new Date(
+                            /^\d{4}-\d{2}-\d{2}$/.test(p.registeredAt ?? "")
+                              ? `${p.registeredAt}T12:00:00`
+                              : (p.registeredAt as string),
+                          ).toLocaleDateString("es-PE", {
+                            dateStyle: "medium",
+                          })}`}
                     </p>
                   )}
                 </li>

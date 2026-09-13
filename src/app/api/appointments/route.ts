@@ -1,5 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import {
+  normalizeProcedures,
+  proceduresLabel,
+} from "@/lib/appointment-procedures";
+
+function resolveProceduresFromBody(body: {
+  procedures?: unknown;
+  type?: unknown;
+}): { procedures: string[]; type: string } {
+  const procedures = normalizeProcedures(
+    body.procedures,
+    typeof body.type === "string" ? body.type : null,
+  );
+  const list = procedures.length > 0 ? procedures : ["Consulta"];
+  return { procedures: list, type: proceduresLabel(list) };
+}
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -39,10 +56,8 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   const body = await request.json();
 
-  // En esta demo asumimos una doctora fija (primer usuario) o un id recibido
   let doctorId = body.doctorId as string | undefined;
   if (!doctorId) {
-    // Si no existe usuario doctora en la BD, creamos uno por defecto
     const defaultEmail = "doctora@harmonia.local";
     const doctor =
       (await prisma.user.findFirst()) ??
@@ -61,6 +76,8 @@ export async function POST(request: NextRequest) {
     doctorId = doctor.id;
   }
 
+  const { procedures, type } = resolveProceduresFromBody(body);
+
   try {
     const appointment = await prisma.appointment.create({
       data: {
@@ -68,7 +85,8 @@ export async function POST(request: NextRequest) {
         doctorId,
         startAt: new Date(body.startAt),
         endAt: new Date(body.endAt),
-        type: body.type || "Consulta",
+        type,
+        procedures: procedures as Prisma.InputJsonValue,
         status: body.status || "pendiente",
         reason: body.reason ?? null,
         notes: body.notes ?? null,
@@ -97,16 +115,27 @@ export async function PUT(request: NextRequest) {
     );
   }
 
+  const hasProcedures =
+    Object.prototype.hasOwnProperty.call(body, "procedures") ||
+    Object.prototype.hasOwnProperty.call(body, "type");
+  const resolved = hasProcedures ? resolveProceduresFromBody(body) : null;
+
   try {
     const appointment = await prisma.appointment.update({
       where: { id },
       data: {
         startAt: body.startAt ? new Date(body.startAt) : undefined,
         endAt: body.endAt ? new Date(body.endAt) : undefined,
-        type: body.type ?? undefined,
+        ...(resolved
+          ? {
+              type: resolved.type,
+              procedures: resolved.procedures as Prisma.InputJsonValue,
+            }
+          : {}),
         status: body.status ?? undefined,
         reason: body.reason ?? undefined,
         notes: body.notes ?? undefined,
+        patientId: body.patientId ?? undefined,
       },
       include: { patient: true },
     });
@@ -143,4 +172,3 @@ export async function DELETE(request: NextRequest) {
     );
   }
 }
-

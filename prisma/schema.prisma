@@ -57,6 +57,8 @@ model Appointment {
   startAt   DateTime
   endAt     DateTime
   type      String
+  // Uno o más procedimientos de la lista de precios (JSON string[]).
+  procedures Json?
   status    String   @default("pendiente")
   reason    String?
   notes     String?

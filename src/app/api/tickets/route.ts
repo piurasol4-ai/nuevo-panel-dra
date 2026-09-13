@@ -3,6 +3,10 @@ import { formatPatientDocument } from "@/lib/patient-document";
 import { prisma } from "@/lib/prisma";
 import { parseSolesToCents } from "@/lib/money";
 import { Prisma } from "@prisma/client";
+import {
+  appointmentProcedures,
+  proceduresLabel,
+} from "@/lib/appointment-procedures";
 
 function toLimaISODate(d: Date) {
   const parts = new Intl.DateTimeFormat("es-PE", {
@@ -250,7 +254,7 @@ export async function POST(request: NextRequest) {
         patientId: appt.patientId,
         patientName: appt.patient.fullName,
         patientDni: formatPatientDocument(appt.patient),
-        procedureName: appt.type,
+        procedureName: proceduresLabel(appointmentProcedures(appt)),
         procedureUnitPriceCents,
         paymentEfectivoCents,
         paymentYapeCents,
