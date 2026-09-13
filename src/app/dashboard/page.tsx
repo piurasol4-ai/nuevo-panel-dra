@@ -1,9 +1,7 @@
-import { prisma } from "@/lib/prisma";
 import Link from "next/link";
+import { prisma } from "@/lib/prisma";
 import RevenueSummary from "./revenue-summary";
 
-// Evita que Next prerenderice esta página durante `next build`,
-// porque aquí consultamos la BD con Prisma.
 export const dynamic = "force-dynamic";
 
 function getLimaMonthDay(d: Date): { month: number; day: number } {
@@ -26,14 +24,16 @@ export default async function DashboardPage() {
   const now = new Date();
   const { month, day } = getLimaMonthDay(now);
 
-  const patients = await prisma.patient.findMany({
-    orderBy: { fullName: "asc" },
-  });
-  const todaysBirthdays = patients.filter((p) => {
-    const bd = new Date(p.birthDate);
-    const lima = getLimaMonthDay(bd);
-    return lima.month === month && lima.day === day;
-  });
+  const todaysBirthdays = await prisma.$queryRaw<
+    Array<{ id: string; fullName: string }>
+  >`
+    SELECT id, "fullName"
+    FROM "Patient"
+    WHERE EXTRACT(MONTH FROM ("birthDate" AT TIME ZONE 'America/Lima')) = ${month}
+      AND EXTRACT(DAY FROM ("birthDate" AT TIME ZONE 'America/Lima')) = ${day}
+    ORDER BY "fullName" ASC
+    LIMIT 20
+  `;
 
   return (
     <div className="space-y-6 p-4 sm:p-6">
@@ -97,9 +97,12 @@ export default async function DashboardPage() {
                 Consulta rápida de pacientes priorizados y próximas atenciones.
               </p>
             </div>
-            <button className="rounded-full bg-amber-500 px-3 py-1 text-xs font-medium text-white shadow hover:bg-amber-600">
+            <Link
+              href="/agenda"
+              className="rounded-full bg-amber-500 px-3 py-1 text-xs font-medium text-white shadow hover:bg-amber-600"
+            >
               Ver agenda completa
-            </button>
+            </Link>
           </header>
 
           <div className="space-y-3">
@@ -120,34 +123,13 @@ export default async function DashboardPage() {
                     Contacto de emergencia: Luis Perez · 30009876543
                   </p>
                 </div>
-                <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-rose-700">
-                  Prioritario
-                </span>
-              </div>
-            </article>
-
-            <article className="rounded-lg border border-slate-100 bg-white p-3">
-              <div className="flex items-start justify-between gap-2">
-                <div>
-                  <p className="text-sm font-semibold text-slate-900">
-                    Juan Gómez
-                  </p>
-                  <p className="mt-1 text-xs text-slate-600">
-                    Control post operatorio · Consulta a las 15:30
-                  </p>
-                </div>
-                <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">
-                  Estable
-                </span>
               </div>
             </article>
           </div>
         </div>
 
         <aside className="space-y-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <h2 className="text-sm font-semibold text-slate-900">
-            Alertas importantes
-          </h2>
+          <h2 className="text-sm font-semibold text-slate-900">Alertas</h2>
           <p className="text-xs text-slate-500">
             Seguimiento rápido de eventos clínicos y administrativos.
           </p>
@@ -213,4 +195,3 @@ export default async function DashboardPage() {
     </div>
   );
 }
-

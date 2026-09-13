@@ -1,7 +1,6 @@
- "use client";
+  "use client";
 
 import { useEffect, useState, type ChangeEvent } from "react";
-import * as XLSX from "xlsx";
 
 type ProductRow = {
   id: number;
@@ -369,7 +368,8 @@ export default function PreciosProductosPage() {
     };
   }
 
-  function handleDownloadExcelTemplate() {
+  async function handleDownloadExcelTemplate() {
+    const XLSX = await import("xlsx");
     const templateRows = rows.length
       ? rows.map((r) => ({
           Medicamento: r.name,
@@ -408,6 +408,7 @@ export default function PreciosProductosPage() {
     if (!file) return;
 
     try {
+      const XLSX = await import("xlsx");
       const buffer = await file.arrayBuffer();
       const wb = XLSX.read(buffer, { type: "array" });
       const sheetName = wb.SheetNames[0];

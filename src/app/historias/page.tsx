@@ -12,10 +12,6 @@ import { notifyVisitUpdated } from "@/lib/clinical-visit-sync";
 import DateRangeFilter from "@/components/date-range-filter";
 import { formatPatientDocument } from "@/lib/patient-document";
 
-// Evita el prerender estático en build (Railway/Next),
-// ya que esta página depende de estado del cliente y query params.
-export const dynamic = "force-dynamic";
-
 type ClinicalAttachment = {
   id: string;
   driveFileId: string;
@@ -71,7 +67,8 @@ type AtencionAutosaveFields = {
   glucose: string;
 };
 
-const AUTOSAVE_DEBOUNCE_MS = 1500;
+/** Más largo = menos escrituras a BD / Railway. */
+const AUTOSAVE_DEBOUNCE_MS = 8000;
 
 type PatientExtras = Patient & {
   address?: string | null;

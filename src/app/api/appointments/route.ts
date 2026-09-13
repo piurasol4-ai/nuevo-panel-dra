@@ -5,19 +5,32 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const date = searchParams.get("date");
 
-  // findMany recibe un argumento opcional, por eso usamos NonNullable para
-  // asegurar que exista la propiedad "where" al tipar.
-  const where: NonNullable<Parameters<typeof prisma.appointment.findMany>[0]>["where"] = {};
-  if (date) {
-    const startOfDay = new Date(date + "T00:00:00.000Z");
-    const endOfDay = new Date(date + "T23:59:59.999Z");
-    where.startAt = { gte: startOfDay, lte: endOfDay };
+  if (!date) {
+    return NextResponse.json(
+      { error: "Falta el parámetro date (YYYY-MM-DD)." },
+      { status: 400 },
+    );
   }
 
+  const startOfDay = new Date(date + "T00:00:00.000Z");
+  const endOfDay = new Date(date + "T23:59:59.999Z");
+
   const appointments = await prisma.appointment.findMany({
-    where,
-    include: { patient: true },
+    where: { startAt: { gte: startOfDay, lte: endOfDay } },
+    include: {
+      patient: {
+        select: {
+          id: true,
+          fullName: true,
+          documentType: true,
+          dni: true,
+          phone: true,
+          birthDate: true,
+        },
+      },
+    },
     orderBy: { startAt: "asc" },
+    take: 200,
   });
 
   return NextResponse.json(appointments);

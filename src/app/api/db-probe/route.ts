@@ -1,9 +1,13 @@
-import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
 
+/** Desactivado en producción para evitar abuso y carga innecesaria en Railway. */
 export async function GET() {
+  if (process.env.NODE_ENV === "production") {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  const { prisma } = await import("@/lib/prisma");
   try {
-    // Solo mostramos conteos para confirmar que estamos conectados a la DB correcta.
     const [users, patients, appointments, clinicalNotes, recipes] =
       await Promise.all([
         prisma.user.count(),
@@ -23,4 +27,3 @@ export async function GET() {
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
 }
-

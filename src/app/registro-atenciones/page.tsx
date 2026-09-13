@@ -18,7 +18,7 @@ import {
 } from "@/lib/clinical-attachment-limits";
 import { subscribeVisitUpdated } from "@/lib/clinical-visit-sync";
 import DateRangeFilter from "@/components/date-range-filter";
-import { buildDateRangeQuery, startOfMonthISO, toLocalISODate } from "@/lib/date-range";
+import { buildDateRangeQuery, toLocalISODate } from "@/lib/date-range";
 
 type RegistroRow = {
   visitId: string;
@@ -151,7 +151,12 @@ function RegistroAtencionesPageInner() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filterText, setFilterText] = useState("");
-  const [filterDateFrom, setFilterDateFrom] = useState(() => startOfMonthISO());
+  const [filterDateFrom, setFilterDateFrom] = useState(() => {
+    const now = new Date();
+    const from = new Date(now);
+    from.setDate(now.getDate() - 13);
+    return toLocalISODate(from);
+  });
   const [filterDateTo, setFilterDateTo] = useState(() => toLocalISODate(new Date()));
   const [visitLoading, setVisitLoading] = useState(false);
 
@@ -258,8 +263,7 @@ function RegistroAtencionesPageInner() {
       }
     });
 
-    const interval = window.setInterval(sync, 15000);
-
+    // Sin polling periódico: solo al volver a la pestaña o aviso entre ventanas.
     const onVisibility = () => {
       if (document.visibilityState === "visible") sync();
     };
@@ -267,16 +271,9 @@ function RegistroAtencionesPageInner() {
 
     return () => {
       unsub();
-      window.clearInterval(interval);
       document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [selectedId, visitPatientId, tab, refreshSelectedVisit]);
-
-  useEffect(() => {
-    if (tab === "atencion" && selectedId) {
-      void refreshSelectedVisit();
-    }
-  }, [tab, selectedId, refreshSelectedVisit]);
 
   useEffect(() => {
     if (!rows.length) return;

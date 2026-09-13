@@ -67,7 +67,7 @@ export default function PatientsPage() {
   const [registerDateTo, setRegisterDateTo] = useState("");
 
   useEffect(() => {
-    fetch("/api/patients")
+    fetch("/api/patients?full=1")
       .then((r) => r.json())
       .then(setPatients)
       .catch(console.error);

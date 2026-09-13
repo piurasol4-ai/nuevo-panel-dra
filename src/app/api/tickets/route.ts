@@ -34,13 +34,51 @@ export async function GET(request: NextRequest) {
   const appointmentId = url.searchParams.get("appointmentId");
   if (appointmentId) where.appointmentId = appointmentId;
 
+  const includeLines = url.searchParams.get("summary") !== "1";
+
+  if (includeLines) {
+    const tickets = await prisma.ticketRecord.findMany({
+      where,
+      include: { ticketLines: true },
+      orderBy: { createdAt: "desc" },
+      take: 200,
+    });
+
+    return NextResponse.json({
+      ok: true,
+      tickets: tickets.map((t) => ({
+        id: t.id,
+        ticketNumber: t.ticketNumber,
+        createdAt: t.createdAt,
+        dateISO: t.dateISO,
+        appointmentId: t.appointmentId,
+        patientId: t.patientId,
+        patientName: t.patientName,
+        patientDni: t.patientDni,
+        procedureName: t.procedureName,
+        procedureUnitPriceCents: t.procedureUnitPriceCents,
+        paymentEfectivoCents: t.paymentEfectivoCents,
+        paymentYapeCents: t.paymentYapeCents,
+        paymentPlinCents: t.paymentPlinCents,
+        paymentTransferenciaCents: t.paymentTransferenciaCents,
+        paymentTotalCents: t.paymentTotalCents,
+        totalCents: t.totalCents,
+        ticketLines: t.ticketLines.map((l) => ({
+          id: l.id,
+          productId: l.productId,
+          name: l.name,
+          quantity: l.quantity,
+          unitPriceCents: l.unitPriceCents,
+          lineTotalCents: l.lineTotalCents,
+        })),
+      })),
+    });
+  }
+
   const tickets = await prisma.ticketRecord.findMany({
     where,
-    include: {
-      ticketLines: true,
-    },
     orderBy: { createdAt: "desc" },
-    take: 200,
+    take: 500,
   });
 
   return NextResponse.json({
@@ -62,14 +100,7 @@ export async function GET(request: NextRequest) {
       paymentTransferenciaCents: t.paymentTransferenciaCents,
       paymentTotalCents: t.paymentTotalCents,
       totalCents: t.totalCents,
-      ticketLines: t.ticketLines.map((l) => ({
-        id: l.id,
-        productId: l.productId,
-        name: l.name,
-        quantity: l.quantity,
-        unitPriceCents: l.unitPriceCents,
-        lineTotalCents: l.lineTotalCents,
-      })),
+      ticketLines: [],
     })),
   });
 }

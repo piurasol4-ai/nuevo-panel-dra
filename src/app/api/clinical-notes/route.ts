@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import crypto from "crypto";
-import { deleteCloudinaryAsset } from "@/lib/cloudinary";
 
 export type ClinicalAttachment = {
   id: string;
@@ -134,6 +133,7 @@ function normalizeAttachments(input: unknown): ClinicalAttachment[] {
 
 async function deleteDriveFileSafe(fileId: string) {
   try {
+    const { deleteCloudinaryAsset } = await import("@/lib/cloudinary");
     await deleteCloudinaryAsset(fileId);
   } catch (e) {
     console.error("deleteCloudinaryAssetSafe:", fileId, e);

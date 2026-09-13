@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { SESSION_COOKIE_NAME, verifySession } from "@/lib/auth";
-import { deleteCloudinaryAsset } from "@/lib/cloudinary";
 
 /**
  * Quita un archivo de Cloudinary (p. ej. el usuario subió y lo eliminó antes de guardar la ficha).
@@ -25,6 +24,7 @@ export async function DELETE(request: NextRequest) {
   }
 
   try {
+    const { deleteCloudinaryAsset } = await import("@/lib/cloudinary");
     await deleteCloudinaryAsset(driveFileId);
     return NextResponse.json({ ok: true });
   } catch (err) {

@@ -4,11 +4,14 @@ import { PATIENT_LIST_SELECT } from "@/lib/patient-queries";
 import { validatePatientDocument } from "@/lib/patient-document";
 
 export async function GET(request: NextRequest) {
-  const lite = request.nextUrl.searchParams.get("lite") === "1";
+  // Por defecto lite (listas). Solo patients page pide full=1.
+  const full = request.nextUrl.searchParams.get("full") === "1";
+  const lite = !full;
 
   const patients = await prisma.patient.findMany({
     select: lite ? PATIENT_LIST_SELECT : undefined,
     orderBy: { createdAt: "desc" },
+    take: lite ? 2000 : 500,
   });
   return NextResponse.json(patients);
 }

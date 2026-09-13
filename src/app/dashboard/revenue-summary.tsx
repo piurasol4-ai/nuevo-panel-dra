@@ -72,7 +72,7 @@ export default function RevenueSummary() {
 
       try {
         const res = await fetch(
-          `/api/tickets?startISO=${encodeURIComponent(rangeStartISO)}&endISO=${encodeURIComponent(rangeEndISO)}`,
+          `/api/tickets?startISO=${encodeURIComponent(rangeStartISO)}&endISO=${encodeURIComponent(rangeEndISO)}&summary=1`,
         );
         const json = (await res.json()) as {
           ok?: boolean;
